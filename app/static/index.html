@@ -111,16 +111,16 @@
         <div class="cpu-panel">
           <h2>CPU vs CPU</h2>
           <p class="panel-note">
-            2人戦の自己対戦を回して、勝敗集計や戦略表JSONの書き出しに使えます。
+            2人戦の自己対戦を回して、勝敗集計や戦略表JSONの書き出しに使えます。`.py` ファイルを選ぶとアップロードしてから実行します。
           </p>
           <div class="setup-grid">
             <div class="amount-controls">
-              <label for="cpu-match-hero">Hero CPU Path</label>
-              <input id="cpu-match-hero" type="text" />
+              <label for="cpu-match-hero-file">Hero CPU File</label>
+              <input id="cpu-match-hero-file" type="file" accept=".py" />
             </div>
             <div class="amount-controls">
-              <label for="cpu-match-villain">Villain CPU Path</label>
-              <input id="cpu-match-villain" type="text" />
+              <label for="cpu-match-villain-file">Villain CPU File</label>
+              <input id="cpu-match-villain-file" type="file" accept=".py" />
             </div>
             <div class="amount-controls">
               <label for="cpu-match-hands">Hands</label>
@@ -139,11 +139,11 @@
         <div class="cpu-panel">
           <h2>CPU Multiplayer</h2>
           <p class="panel-note">
-            複数CPUを同時に卓へ座らせて自己対戦を回します。1行に1つずつ Python ファイルのパスを入れてください。
+            複数CPUを同時に卓へ座らせて自己対戦を回します。`.py` ファイルを複数選択してください。
           </p>
           <div class="amount-controls">
-            <label for="cpu-multi-paths">CPU Paths</label>
-            <textarea id="cpu-multi-paths" spellcheck="false" placeholder="/Users/.../cpu1.py&#10;/Users/.../cpu2.py"></textarea>
+            <label for="cpu-multi-files">CPU Files</label>
+            <input id="cpu-multi-files" type="file" accept=".py" multiple />
           </div>
           <div class="setup-grid">
             <div class="amount-controls">

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import re
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -53,6 +55,25 @@ class CpuMultiMatchRequest(BaseModel):
     hands: int = 100
     starting_stack: int = 2000
     export_strategy_path: Optional[str] = None
+
+
+def sanitize_upload_name(filename: str) -> str:
+    stem = Path(filename or "uploaded_cpu.py").stem
+    safe = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_") or "uploaded_cpu"
+    return f"{safe}.py"
+
+
+async def save_uploaded_cpu(file: UploadFile) -> Path:
+    filename = sanitize_upload_name(file.filename or "uploaded_cpu.py")
+    if not filename.endswith(".py"):
+        raise HTTPException(status_code=400, detail="Only .py files are supported.")
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    target = EMBEDDED_CPU_DIR / f"{timestamp}_{filename}"
+    target.write_bytes(content)
+    return target
 
 
 @app.get("/")
@@ -119,6 +140,25 @@ async def save_cpu_code(request: EmbeddedCpuRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return game.serialize_state()
+
+
+@app.post("/api/upload-cpu-file")
+async def upload_cpu_file(
+    file: UploadFile = File(...),
+    seat: Optional[int] = Form(None),
+) -> dict:
+    try:
+        saved_path = save_path = await save_uploaded_cpu(file)
+        if seat is not None:
+            game.load_cpu(seat, str(save_path))
+            state = game.serialize_state()
+            state["uploaded_cpu_path"] = str(saved_path)
+            return state
+        return {"uploaded_cpu_path": str(saved_path)}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.post("/api/run-cpu-match")

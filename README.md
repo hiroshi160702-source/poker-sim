@@ -10,6 +10,7 @@
 - 自分視点の勝率表示
 - アクションログとハンド履歴
 - CPU を Python ファイルで差し替え可能
+- `.py` ファイルを画面からアップロードして読み込み可能
 - CPU コードを画面から保存して読み込み可能
 - CPU vs CPU の自己対戦
 - マルチプレイ自己対戦と戦略表の書き出し
@@ -41,7 +42,7 @@ Mac では次も使えます。
 2. 自分の番で `Fold / Check / Call / Bet / Raise / All-in` を選択
 3. `Bet / Raise To` に金額を入力してベットサイズを指定
 4. `Table Setup` で初期スタックと CPU 人数を変更
-5. `CPU Files` から各 CPU の戦略ファイルを差し替え
+5. `CPU Files` から各 CPU の `.py` ファイルをアップロードして差し替え
 
 ## CPU Bots
 
@@ -84,7 +85,7 @@ def decide_action(game_state, player_state, legal_actions):
 
 ### Heads-up
 
-画面の `CPU vs CPU` から 2 人対戦を実行できます。
+画面の `CPU vs CPU` から 2 人対戦を実行できます。`.py` ファイルを選ぶと内部にアップロードしてから実行します。
 
 - Hero CPU path
 - Villain CPU path
@@ -93,7 +94,7 @@ def decide_action(game_state, player_state, legal_actions):
 
 ### Multiplayer
 
-画面の `CPU Multiplayer` から複数 CPU を同時に対戦させられます。  
+画面の `CPU Multiplayer` から複数 CPU の `.py` ファイルを同時に対戦させられます。  
 結果には次が含まれます。
 
 - 勝利数

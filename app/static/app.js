@@ -2,6 +2,7 @@ const stateUrl = "/api/state";
 const newHandUrl = "/api/new-hand";
 const actionUrl = "/api/action";
 const loadCpuUrl = "/api/load-cpu";
+const uploadCpuFileUrl = "/api/upload-cpu-file";
 const saveCpuCodeUrl = "/api/save-cpu-code";
 const resetTableUrl = "/api/reset-table";
 const configureTableUrl = "/api/configure-table";
@@ -38,6 +39,29 @@ async function apiFetch(url, options = {}) {
     if (!response.ok) {
       const payload = await response.json().catch(() => ({ detail: "Request failed" }));
       throw new Error(payload.detail || "Request failed");
+    }
+    return await response.json();
+  } finally {
+    requestInFlight = false;
+  }
+}
+
+async function uploadCpuFile(file, seat = null) {
+  const formData = new FormData();
+  formData.append("file", file);
+  if (seat !== null && seat !== undefined) {
+    formData.append("seat", String(seat));
+  }
+
+  requestInFlight = true;
+  try {
+    const response = await fetch(uploadCpuFileUrl, {
+      method: "POST",
+      body: formData,
+    });
+    if (!response.ok) {
+      const payload = await response.json().catch(() => ({ detail: "Upload failed" }));
+      throw new Error(payload.detail || "Upload failed");
     }
     return await response.json();
   } finally {
@@ -370,9 +394,10 @@ function renderCpuConfig(players) {
         <div class="cpu-config">
           <strong>${player.name}</strong>
           <input id="cpu-path-${player.seat}" type="text" value="${player.cpu_path || ""}" />
+          <input id="cpu-file-${player.seat}" type="file" accept=".py" />
           <textarea id="cpu-code-${player.seat}" spellcheck="false" placeholder="def decide_action(game_state, player_state, legal_actions):\n    ...">${defaultCpuCode}</textarea>
           <div class="cpu-config-actions">
-            <button data-load-seat="${player.seat}">Load Python File</button>
+            <button data-upload-seat="${player.seat}">Upload .py File</button>
             <button data-save-seat="${player.seat}">Save as Python File</button>
           </div>
         </div>
@@ -382,14 +407,15 @@ function renderCpuConfig(players) {
 
   cpuPlayers.forEach((player) => {
     document
-      .querySelector(`button[data-load-seat="${player.seat}"]`)
+      .querySelector(`button[data-upload-seat="${player.seat}"]`)
       .addEventListener("click", async () => {
-        const path = document.getElementById(`cpu-path-${player.seat}`).value;
         try {
-          const nextState = await apiFetch(loadCpuUrl, {
-            method: "POST",
-            body: JSON.stringify({ seat: player.seat, path }),
-          });
+          const input = document.getElementById(`cpu-file-${player.seat}`);
+          const file = input.files && input.files[0];
+          if (!file) {
+            throw new Error("Select a .py file first.");
+          }
+          const nextState = await uploadCpuFile(file, player.seat);
           renderState(nextState);
         } catch (error) {
           alert(error.message);
@@ -513,15 +539,20 @@ document.getElementById("reveal-folded-btn").addEventListener("click", async () 
 document.getElementById("run-cpu-match-btn").addEventListener("click", async () => {
   if (requestInFlight) return;
   try {
-    const heroCpuPath = document.getElementById("cpu-match-hero").value;
-    const villainCpuPath = document.getElementById("cpu-match-villain").value;
+    const heroFile = document.getElementById("cpu-match-hero-file").files[0];
+    const villainFile = document.getElementById("cpu-match-villain-file").files[0];
+    if (!heroFile || !villainFile) {
+      throw new Error("Select both hero and villain .py files.");
+    }
+    const heroUpload = await uploadCpuFile(heroFile);
+    const villainUpload = await uploadCpuFile(villainFile);
     const hands = Number(document.getElementById("cpu-match-hands").value);
     const exportStrategyPath = document.getElementById("cpu-match-export").value.trim();
     const result = await apiFetch(cpuMatchUrl, {
       method: "POST",
       body: JSON.stringify({
-        hero_cpu_path: heroCpuPath,
-        villain_cpu_path: villainCpuPath,
+        hero_cpu_path: heroUpload.uploaded_cpu_path,
+        villain_cpu_path: villainUpload.uploaded_cpu_path,
         hands,
         starting_stack: Number(document.getElementById("starting-stack").value),
         export_strategy_path: exportStrategyPath || null,
@@ -536,16 +567,20 @@ document.getElementById("run-cpu-match-btn").addEventListener("click", async () 
 document.getElementById("run-cpu-multi-btn").addEventListener("click", async () => {
   if (requestInFlight) return;
   try {
-    const cpuPaths = document.getElementById("cpu-multi-paths").value
-      .split("\n")
-      .map((value) => value.trim())
-      .filter(Boolean);
+    const files = Array.from(document.getElementById("cpu-multi-files").files || []);
+    if (files.length < 2) {
+      throw new Error("Select at least two .py files.");
+    }
+    const uploaded = [];
+    for (const file of files) {
+      uploaded.push(await uploadCpuFile(file));
+    }
     const hands = Number(document.getElementById("cpu-multi-hands").value);
     const exportStrategyPath = document.getElementById("cpu-multi-export").value.trim();
     const result = await apiFetch(cpuMultiMatchUrl, {
       method: "POST",
       body: JSON.stringify({
-        cpu_paths: cpuPaths,
+        cpu_paths: uploaded.map((item) => item.uploaded_cpu_path),
         hands,
         starting_stack: Number(document.getElementById("starting-stack").value),
         export_strategy_path: exportStrategyPath || null,
@@ -556,14 +591,6 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     alert(error.message);
   }
 });
-
-document.getElementById("cpu-match-hero").value = "/Users/hiroshi/UEC/lab/poker-sim/app/sample_cpus/strategy_table_cpu.py";
-document.getElementById("cpu-match-villain").value = "/Users/hiroshi/UEC/lab/poker-sim/app/sample_cpus/cfr_agent.py";
-document.getElementById("cpu-multi-paths").value = [
-  "/Users/hiroshi/UEC/lab/poker-sim/app/sample_cpus/table_builder_agent.py",
-  "/Users/hiroshi/UEC/lab/poker-sim/app/sample_cpus/cfr_agent.py",
-  "/Users/hiroshi/UEC/lab/poker-sim/app/sample_cpus/tight_agent.py",
-].join("\n");
 
 refreshState();
 setInterval(refreshState, 6000);
