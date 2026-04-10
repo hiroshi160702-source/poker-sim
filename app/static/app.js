@@ -28,12 +28,28 @@ const defaultCpuCode = `def decide_action(game_state, player_state, legal_action
     return {"type": first["type"], "amount": first.get("amount")}
 `;
 const uploadStatusBySeat = {};
+let cpuMatchSelectionStatus = "No files selected.";
+let cpuMatchSelectionTone = "muted";
+let cpuMultiSelectionStatus = "No files selected.";
+let cpuMultiSelectionTone = "muted";
 
 function setUploadStatus(elementId, message, tone = "muted") {
   const node = document.getElementById(elementId);
   if (!node) return;
   node.className = `upload-status ${tone}`;
   node.textContent = message;
+}
+
+function hasPendingFileSelection() {
+  const perSeatFiles = Array.from(document.querySelectorAll('input[id^="cpu-file-"]'))
+    .some((input) => input.files && input.files.length > 0);
+  const matchHero = document.getElementById("cpu-match-hero-file");
+  const matchVillain = document.getElementById("cpu-match-villain-file");
+  const multi = document.getElementById("cpu-multi-files");
+  return perSeatFiles
+    || Boolean(matchHero && matchHero.files && matchHero.files.length > 0)
+    || Boolean(matchVillain && matchVillain.files && matchVillain.files.length > 0)
+    || Boolean(multi && multi.files && multi.files.length > 0);
 }
 
 async function apiFetch(url, options = {}) {
@@ -416,6 +432,18 @@ function renderCpuConfig(players) {
 
   cpuPlayers.forEach((player) => {
     document
+      .getElementById(`cpu-file-${player.seat}`)
+      .addEventListener("change", (event) => {
+        const file = event.target.files && event.target.files[0];
+        if (file) {
+          uploadStatusBySeat[player.seat] = `Selected: ${file.name}`;
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Selected: ${file.name}`, "muted");
+        } else {
+          uploadStatusBySeat[player.seat] = "No file selected.";
+          setUploadStatus(`cpu-upload-status-${player.seat}`, "No file selected.", "muted");
+        }
+      });
+    document
       .querySelector(`button[data-upload-seat="${player.seat}"]`)
       .addEventListener("click", async () => {
         try {
@@ -470,6 +498,8 @@ function renderState(state) {
   renderHistory(state.history);
   renderHeroWinRate(state);
   renderCpuConfig(state.players);
+  setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
+  setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
   if (!document.getElementById("cpu-match-result").innerHTML) {
     renderCpuMatchResult(null);
   }
@@ -494,9 +524,16 @@ async function refreshState() {
         active.id === "starting-stack" ||
         active.id === "cpu-count" ||
         active.id.startsWith("cpu-path-") ||
-        active.id.startsWith("cpu-code-")
+        active.id.startsWith("cpu-code-") ||
+        active.id.startsWith("cpu-file-") ||
+        active.id === "cpu-match-hero-file" ||
+        active.id === "cpu-match-villain-file" ||
+        active.id === "cpu-multi-files"
       )
     ) {
+      return;
+    }
+    if (hasPendingFileSelection()) {
       return;
     }
     const state = await apiFetch(stateUrlWithReveal());
@@ -558,10 +595,14 @@ document.getElementById("run-cpu-match-btn").addEventListener("click", async () 
     if (!heroFile || !villainFile) {
       throw new Error("Select both hero and villain .py files.");
     }
-    setUploadStatus("cpu-match-upload-status", `Uploading ${heroFile.name} and ${villainFile.name}...`, "muted");
+    cpuMatchSelectionStatus = `Uploading ${heroFile.name} and ${villainFile.name}...`;
+    cpuMatchSelectionTone = "muted";
+    setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
     const heroUpload = await uploadCpuFile(heroFile);
     const villainUpload = await uploadCpuFile(villainFile);
-    setUploadStatus("cpu-match-upload-status", `Uploaded hero: ${heroFile.name} / villain: ${villainFile.name}`, "success");
+    cpuMatchSelectionStatus = `Uploaded hero: ${heroFile.name} / villain: ${villainFile.name}`;
+    cpuMatchSelectionTone = "success";
+    setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
     const hands = Number(document.getElementById("cpu-match-hands").value);
     const exportStrategyPath = document.getElementById("cpu-match-export").value.trim();
     const result = await apiFetch(cpuMatchUrl, {
@@ -576,7 +617,9 @@ document.getElementById("run-cpu-match-btn").addEventListener("click", async () 
     });
     renderCpuMatchResult(result);
   } catch (error) {
-    setUploadStatus("cpu-match-upload-status", `Upload failed: ${error.message}`, "error");
+    cpuMatchSelectionStatus = `Upload failed: ${error.message}`;
+    cpuMatchSelectionTone = "error";
+    setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
     alert(error.message);
   }
 });
@@ -588,16 +631,16 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     if (files.length < 2) {
       throw new Error("Select at least two .py files.");
     }
-    setUploadStatus("cpu-multi-upload-status", `Uploading ${files.length} files...`, "muted");
+    cpuMultiSelectionStatus = `Uploading ${files.length} files...`;
+    cpuMultiSelectionTone = "muted";
+    setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     const uploaded = [];
     for (const file of files) {
       uploaded.push(await uploadCpuFile(file));
     }
-    setUploadStatus(
-      "cpu-multi-upload-status",
-      `Uploaded ${files.length} files: ${files.map((file) => file.name).join(", ")}`,
-      "success",
-    );
+    cpuMultiSelectionStatus = `Uploaded ${files.length} files: ${files.map((file) => file.name).join(", ")}`;
+    cpuMultiSelectionTone = "success";
+    setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     const hands = Number(document.getElementById("cpu-multi-hands").value);
     const exportStrategyPath = document.getElementById("cpu-multi-export").value.trim();
     const result = await apiFetch(cpuMultiMatchUrl, {
@@ -611,9 +654,49 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     });
     renderCpuMatchResult(result);
   } catch (error) {
-    setUploadStatus("cpu-multi-upload-status", `Upload failed: ${error.message}`, "error");
+    cpuMultiSelectionStatus = `Upload failed: ${error.message}`;
+    cpuMultiSelectionTone = "error";
+    setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     alert(error.message);
   }
+});
+
+document.getElementById("cpu-match-hero-file").addEventListener("change", () => {
+  const hero = document.getElementById("cpu-match-hero-file").files[0];
+  const villain = document.getElementById("cpu-match-villain-file").files[0];
+  if (hero || villain) {
+    cpuMatchSelectionStatus = `Selected: ${hero ? hero.name : "Hero missing"} / ${villain ? villain.name : "Villain missing"}`;
+    cpuMatchSelectionTone = "muted";
+  } else {
+    cpuMatchSelectionStatus = "No files selected.";
+    cpuMatchSelectionTone = "muted";
+  }
+  setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
+});
+
+document.getElementById("cpu-match-villain-file").addEventListener("change", () => {
+  const hero = document.getElementById("cpu-match-hero-file").files[0];
+  const villain = document.getElementById("cpu-match-villain-file").files[0];
+  if (hero || villain) {
+    cpuMatchSelectionStatus = `Selected: ${hero ? hero.name : "Hero missing"} / ${villain ? villain.name : "Villain missing"}`;
+    cpuMatchSelectionTone = "muted";
+  } else {
+    cpuMatchSelectionStatus = "No files selected.";
+    cpuMatchSelectionTone = "muted";
+  }
+  setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
+});
+
+document.getElementById("cpu-multi-files").addEventListener("change", () => {
+  const files = Array.from(document.getElementById("cpu-multi-files").files || []);
+  if (files.length > 0) {
+    cpuMultiSelectionStatus = `Selected ${files.length} files: ${files.map((file) => file.name).join(", ")}`;
+    cpuMultiSelectionTone = "muted";
+  } else {
+    cpuMultiSelectionStatus = "No files selected.";
+    cpuMultiSelectionTone = "muted";
+  }
+  setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
 });
 
 refreshState();
