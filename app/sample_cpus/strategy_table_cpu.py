@@ -7,7 +7,13 @@ from pathlib import Path
 
 from app.strategy_tables.lib import candidate_infosets, encode_infoset
 
-DEFAULT_TABLE_PATH = Path(__file__).resolve().parent / "strategy_tables" / "example_gto.json"
+APP_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_TABLE_CANDIDATES = [
+    Path(__file__).resolve().parent / "strategy_tables" / "example_gto.json",
+    APP_ROOT / "sample_cpus" / "strategy_tables" / "multiway_3p_100000.json",
+    APP_ROOT / "sample_cpus" / "strategy_tables" / "table_builder_expanded_200000.json",
+    APP_ROOT / "sample_cpus" / "strategy_tables" / "example_gto.json",
+]
 
 
 def decide_action(game_state, player_state, legal_actions):
@@ -19,9 +25,20 @@ def decide_action(game_state, player_state, legal_actions):
 
 
 @lru_cache(maxsize=4)
-def load_strategy_table(table_path: str = str(DEFAULT_TABLE_PATH)):
-    path = Path(table_path).resolve()
+def load_strategy_table(table_path: str | None = None):
+    path = resolve_table_path(table_path)
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def resolve_table_path(table_path: str | None) -> Path:
+    if table_path:
+        path = Path(table_path).resolve()
+        if path.exists():
+            return path
+    for candidate in DEFAULT_TABLE_CANDIDATES:
+        if candidate.exists():
+            return candidate.resolve()
+    raise FileNotFoundError("No strategy table JSON was found for strategy_table_cpu.py.")
 
 
 def lookup_strategy(table, infoset, legal_actions):
