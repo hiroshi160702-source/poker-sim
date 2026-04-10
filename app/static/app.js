@@ -27,6 +27,14 @@ const defaultCpuCode = `def decide_action(game_state, player_state, legal_action
     first = legal_actions[0]
     return {"type": first["type"], "amount": first.get("amount")}
 `;
+const uploadStatusBySeat = {};
+
+function setUploadStatus(elementId, message, tone = "muted") {
+  const node = document.getElementById(elementId);
+  if (!node) return;
+  node.className = `upload-status ${tone}`;
+  node.textContent = message;
+}
 
 async function apiFetch(url, options = {}) {
   requestInFlight = true;
@@ -395,6 +403,7 @@ function renderCpuConfig(players) {
           <strong>${player.name}</strong>
           <input id="cpu-path-${player.seat}" type="text" value="${player.cpu_path || ""}" />
           <input id="cpu-file-${player.seat}" type="file" accept=".py" />
+          <div id="cpu-upload-status-${player.seat}" class="upload-status muted">${uploadStatusBySeat[player.seat] || "No file selected."}</div>
           <textarea id="cpu-code-${player.seat}" spellcheck="false" placeholder="def decide_action(game_state, player_state, legal_actions):\n    ...">${defaultCpuCode}</textarea>
           <div class="cpu-config-actions">
             <button data-upload-seat="${player.seat}">Upload .py File</button>
@@ -415,9 +424,14 @@ function renderCpuConfig(players) {
           if (!file) {
             throw new Error("Select a .py file first.");
           }
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploading ${file.name}...`, "muted");
           const nextState = await uploadCpuFile(file, player.seat);
+          uploadStatusBySeat[player.seat] = `Uploaded: ${file.name}`;
           renderState(nextState);
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploaded: ${file.name}`, "success");
         } catch (error) {
+          uploadStatusBySeat[player.seat] = `Upload failed: ${error.message}`;
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Upload failed: ${error.message}`, "error");
           alert(error.message);
         }
       });
@@ -544,8 +558,10 @@ document.getElementById("run-cpu-match-btn").addEventListener("click", async () 
     if (!heroFile || !villainFile) {
       throw new Error("Select both hero and villain .py files.");
     }
+    setUploadStatus("cpu-match-upload-status", `Uploading ${heroFile.name} and ${villainFile.name}...`, "muted");
     const heroUpload = await uploadCpuFile(heroFile);
     const villainUpload = await uploadCpuFile(villainFile);
+    setUploadStatus("cpu-match-upload-status", `Uploaded hero: ${heroFile.name} / villain: ${villainFile.name}`, "success");
     const hands = Number(document.getElementById("cpu-match-hands").value);
     const exportStrategyPath = document.getElementById("cpu-match-export").value.trim();
     const result = await apiFetch(cpuMatchUrl, {
@@ -560,6 +576,7 @@ document.getElementById("run-cpu-match-btn").addEventListener("click", async () 
     });
     renderCpuMatchResult(result);
   } catch (error) {
+    setUploadStatus("cpu-match-upload-status", `Upload failed: ${error.message}`, "error");
     alert(error.message);
   }
 });
@@ -571,10 +588,16 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     if (files.length < 2) {
       throw new Error("Select at least two .py files.");
     }
+    setUploadStatus("cpu-multi-upload-status", `Uploading ${files.length} files...`, "muted");
     const uploaded = [];
     for (const file of files) {
       uploaded.push(await uploadCpuFile(file));
     }
+    setUploadStatus(
+      "cpu-multi-upload-status",
+      `Uploaded ${files.length} files: ${files.map((file) => file.name).join(", ")}`,
+      "success",
+    );
     const hands = Number(document.getElementById("cpu-multi-hands").value);
     const exportStrategyPath = document.getElementById("cpu-multi-export").value.trim();
     const result = await apiFetch(cpuMultiMatchUrl, {
@@ -588,6 +611,7 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     });
     renderCpuMatchResult(result);
   } catch (error) {
+    setUploadStatus("cpu-multi-upload-status", `Upload failed: ${error.message}`, "error");
     alert(error.message);
   }
 });

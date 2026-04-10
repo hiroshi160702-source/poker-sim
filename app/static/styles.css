@@ -537,6 +537,31 @@ button:disabled {
   margin: 8px 0 0;
 }
 
+.upload-status {
+  margin-top: 8px;
+  padding: 8px 10px;
+  border-radius: 12px;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.upload-status.muted {
+  color: var(--muted);
+}
+
+.upload-status.success {
+  color: #baf3d5;
+  background: rgba(52, 211, 153, 0.16);
+  border: 1px solid rgba(52, 211, 153, 0.28);
+}
+
+.upload-status.error {
+  color: #ffd2d2;
+  background: rgba(239, 68, 68, 0.16);
+  border: 1px solid rgba(239, 68, 68, 0.28);
+}
+
 .list-card {
   padding: 12px 14px;
   border-radius: 16px;
