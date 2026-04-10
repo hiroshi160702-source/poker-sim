@@ -1,83 +1,51 @@
 # Texas Hold'em Simulator
 
-テキサスホールデムのローカル用シミュレーションゲームです。  
-人間プレイヤー 1 人と CPU プレイヤーが円卓を囲む UI で、現在の手番、ベット状況、フォールド、チェック、レイズ、オールインが一目で分かるようにしています。
+テキサスホールデムをブラウザで遊べるシミュレーションゲームです。  
+人間 vs CPU だけでなく、CPU 同士のヘッズアップ対戦やマルチプレイ自己対戦、戦略表の生成にも対応しています。
 
-## 特徴
+## Features
 
-- ポーカーテーブルを囲むビジュアルレイアウト
-- 人間の行動ボタンと現在ターンの強調表示
+- テーブルを囲むポーカーUI
+- 手番、ベット、チェック、フォールド、レイズ、オールインが見やすい表示
 - 自分視点の勝率表示
-- アクションログと直近ハンド履歴
-- CPUごとに任意の Python ファイルを読み込み可能
-- CPU同士のヘッズアップ対戦
-- CPU同士のマルチプレイ自己対戦
-- 各ハンドの結果を `logs/hand_XXXX.json` に保存
+- アクションログとハンド履歴
+- CPU を Python ファイルで差し替え可能
+- CPU コードを画面から保存して読み込み可能
+- CPU vs CPU の自己対戦
+- マルチプレイ自己対戦と戦略表の書き出し
 
-## 起動方法
+## Quick Start
 
 ```bash
-cd /Users/hiroshi/UEC/lab/poker-sim
 python3 -m pip install -r requirements.txt
-./start_server.sh
+python3 -m uvicorn app.main:app --reload
 ```
 
-ブラウザで `http://127.0.0.1:8000` を開いてください。
+起動後、ブラウザで `http://127.0.0.1:8000` を開いてください。
 
-Mac なら [open_game.command](/Users/hiroshi/UEC/lab/poker-sim/open_game.command) をダブルクリックして起動しても大丈夫です。
+Mac では次も使えます。
+
+```bash
+./start_server.sh
+```
 
 停止は次です。
 
 ```bash
-cd /Users/hiroshi/UEC/lab/poker-sim
 ./stop_server.sh
 ```
 
-または [stop_game.command](/Users/hiroshi/UEC/lab/poker-sim/stop_game.command) を実行してください。
+## How To Play
 
-## GitHub公開と外部公開
+1. `Start / Next Hand` でゲーム開始
+2. 自分の番で `Fold / Check / Call / Bet / Raise / All-in` を選択
+3. `Bet / Raise To` に金額を入力してベットサイズを指定
+4. `Table Setup` で初期スタックと CPU 人数を変更
+5. `CPU Files` から各 CPU の戦略ファイルを差し替え
 
-このプロジェクトは GitHub に公開して、Render などのホスティングにそのまま載せやすい構成にしてあります。
+## CPU Bots
 
-### 1. GitHub リポジトリを作る
-
-```bash
-cd /Users/hiroshi/UEC/lab/poker-sim
-git init
-git add .
-git commit -m "Initial poker simulator"
-git branch -M main
-git remote add origin <YOUR_GITHUB_REPO_URL>
-git push -u origin main
-```
-
-`.gitignore` で `logs/` や `embedded_cpus/`、ローカルの PID / log ファイルは除外しています。
-
-### 2. Render で公開する
-
-リポジトリを GitHub に push したら、Render でそのリポジトリを選ぶだけで公開できます。  
-このプロジェクトには [render.yaml](/Users/hiroshi/UEC/lab/poker-sim/render.yaml) と [Dockerfile](/Users/hiroshi/UEC/lab/poker-sim/Dockerfile) が入っているので、`uvicorn app.main:app --host 0.0.0.0 --port $PORT` で起動されます。
-
-公開後は `https://...onrender.com` のようなURLで誰でもアクセスできます。
-
-## テーブル設定
-
-- `Starting Stack` で初期スタックを変更
-- `CPU Players` でCPU参加人数を 1 人から 8 人まで変更
-- `Apply Setup` で設定反映
-
-設定反映時は卓をリセットして、新しい人数とスタックで遊べます。
-
-## CPU 設定UI
-
-- `Load Python File` で既存の Python ファイルを読み込み
-- `Save Embedded Code` で画面内テキストエリアに貼ったコードを保存して適用
-
-埋め込みコードは `embedded_cpus/` に保存されます。
-
-## CPU ファイル仕様
-
-CPU 用 Python ファイルは以下の関数を定義してください。
+CPU は Python ファイルで定義します。必要なのは `decide_action` だけです。
 
 ```python
 def decide_action(game_state, player_state, legal_actions):
@@ -86,33 +54,58 @@ def decide_action(game_state, player_state, legal_actions):
 
 - `game_state`: テーブル全体の状態
 - `player_state`: 対象プレイヤーの状態
-- `legal_actions`: 現在選べる行動一覧
+- `legal_actions`: その場で選べる合法手
 
-返り値は次の形式です。
+返り値の例:
 
 ```python
 {"type": "raise", "amount": 250}
 ```
 
-- `type`: `fold`, `check`, `call`, `bet`, `raise`, `all-in`
-- `amount`: `bet` / `raise` のときは最終ベット額
+利用可能な `type`:
 
-サンプル実装は `app/sample_cpus/` にあります。
+- `fold`
+- `check`
+- `call`
+- `bet`
+- `raise`
+- `all-in`
 
-- `random_agent.py`: 重み付きランダム
-- `tight_agent.py`: タイト寄りのハンド選別
-- `cfr_agent.py`: 情報集合を粗く抽象化し、regret matching で行動分布を選ぶ CFR-inspired CPU
-- `game_theory_agent.py`: ポットオッズ、最低防衛頻度、混合戦略を使うゲーム理論寄りCPU
-- `strategy_table_cpu.py`: 事前計算済みの戦略表 `infoset -> action probabilities` を読むCPU
-- `table_builder_agent.py`: ポストフロップ到達を増やし、戦略表収集に向いた自己対戦用CPU
+サンプルは [app/sample_cpus](app/sample_cpus) にあります。
 
-## 戦略表CPU
+- [random_agent.py](app/sample_cpus/random_agent.py)
+- [tight_agent.py](app/sample_cpus/tight_agent.py)
+- [cfr_agent.py](app/sample_cpus/cfr_agent.py)
+- [game_theory_agent.py](app/sample_cpus/game_theory_agent.py)
+- [strategy_table_cpu.py](app/sample_cpus/strategy_table_cpu.py)
+- [table_builder_agent.py](app/sample_cpus/table_builder_agent.py)
 
-`strategy_table_cpu.py` は JSON の戦略表を読み込みます。標準では次を参照します。
+## Self-Play
 
-- [example_gto.json](/Users/hiroshi/UEC/lab/poker-sim/app/sample_cpus/strategy_tables/example_gto.json)
+### Heads-up
 
-情報集合キーは拡張版では次の形式です。
+画面の `CPU vs CPU` から 2 人対戦を実行できます。
+
+- Hero CPU path
+- Villain CPU path
+- Hands
+- Export Strategy JSON
+
+### Multiplayer
+
+画面の `CPU Multiplayer` から複数 CPU を同時に対戦させられます。  
+結果には次が含まれます。
+
+- 勝利数
+- 総獲得チップ
+- 1 位回数と 1 位率
+- 1 ハンドあたり平均獲得チップ
+- 席順ごとの成績
+
+## Strategy Tables
+
+`strategy_table_cpu.py` は事前生成した戦略表 JSON を読み込みます。  
+情報集合キーは次の形式です。
 
 ```text
 phase|position|bucket|pressure|stack_bucket|texture
@@ -126,30 +119,43 @@ flop|late|draw|none|medium|two_tone
 river|any|air|large|shallow|paired
 ```
 
-このファイルをコピーして中身を差し替えれば、事前計算した近似戦略表を読むCPUとして使えます。
-
-## CPU 同士の対戦
-
-UI の `CPU vs CPU` から、2人戦の自己対戦を回せます。
-
-- `Hero CPU Path`
-- `Villain CPU Path`
-- `Hands`
-- `Export Strategy JSON`
-
-を入れて `Run CPU Match` を押すと、勝敗集計を返します。  
-`Export Strategy JSON` を指定すると、対戦中に観測した `infoset -> action frequency` を JSON として保存します。
-
-UI の `CPU Multiplayer` では、複数CPUのファイルパスを1行ずつ入れて多人数卓の自己対戦を回せます。  
-結果には各CPUの `wins`、`profit`、`1位率`、`平均獲得チップ`、席順ごとの成績、最近のハンド結果、フェーズ別の訪問数が含まれます。
-
-CLI で戦略表を生成する場合は次です。
+戦略表の生成例:
 
 ```bash
-cd /Users/hiroshi/UEC/lab/poker-sim
 python3 tools/build_strategy_table.py \
   --hero app/sample_cpus/cfr_agent.py \
   --villain app/sample_cpus/tight_agent.py \
   --hands 500 \
   --out app/sample_cpus/strategy_tables/generated_from_selfplay.json
 ```
+
+生成済みのサンプル表は [app/sample_cpus/strategy_tables](app/sample_cpus/strategy_tables) にあります。
+
+## Project Structure
+
+```text
+app/
+  main.py              FastAPI entrypoint
+  engine.py            Hold'em game engine
+  selfplay.py          CPU self-play runners
+  static/              Frontend files
+  sample_cpus/         Sample CPU bots
+  strategy_tables/     Infoset helpers
+tools/
+  build_strategy_table.py
+```
+
+## Deploy
+
+このリポジトリは Docker / Render で公開しやすい構成です。
+
+- [Dockerfile](Dockerfile)
+- [render.yaml](render.yaml)
+
+Render に GitHub リポジトリを接続すれば、そのまま Web サービスとして公開できます。
+
+## Notes
+
+- ログは `logs/` に保存されます
+- 画面から保存した CPU コードは `embedded_cpus/` に保存されます
+- 生成された戦略表は近似自己対戦ベースであり、厳密な GTO 解ではありません
