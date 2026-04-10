@@ -32,6 +32,10 @@ let cpuMatchSelectionStatus = "No files selected.";
 let cpuMatchSelectionTone = "muted";
 let cpuMultiSelectionStatus = "No files selected.";
 let cpuMultiSelectionTone = "muted";
+let cpuMultiSlots = [
+  { id: 1, file: null, label: "No file selected." },
+  { id: 2, file: null, label: "No file selected." },
+];
 
 function setUploadStatus(elementId, message, tone = "muted") {
   const node = document.getElementById(elementId);
@@ -45,11 +49,10 @@ function hasPendingFileSelection() {
     .some((input) => input.files && input.files.length > 0);
   const matchHero = document.getElementById("cpu-match-hero-file");
   const matchVillain = document.getElementById("cpu-match-villain-file");
-  const multi = document.getElementById("cpu-multi-files");
   return perSeatFiles
     || Boolean(matchHero && matchHero.files && matchHero.files.length > 0)
     || Boolean(matchVillain && matchVillain.files && matchVillain.files.length > 0)
-    || Boolean(multi && multi.files && multi.files.length > 0);
+    || cpuMultiSlots.some((slot) => Boolean(slot.file));
 }
 
 async function apiFetch(url, options = {}) {
@@ -480,6 +483,43 @@ function renderCpuConfig(players) {
   });
 }
 
+function renderCpuMultiSlots() {
+  const container = document.getElementById("cpu-multi-slots");
+  container.innerHTML = cpuMultiSlots
+    .map(
+      (slot, index) => `
+        <div class="cpu-config">
+          <strong>CPU Slot ${index + 1}</strong>
+          <input id="cpu-multi-file-${slot.id}" type="file" accept=".py" />
+          <div id="cpu-multi-slot-status-${slot.id}" class="upload-status muted">${slot.label}</div>
+        </div>
+      `
+    )
+    .join("");
+
+  cpuMultiSlots.forEach((slot) => {
+    document.getElementById(`cpu-multi-file-${slot.id}`).addEventListener("change", (event) => {
+      const file = event.target.files && event.target.files[0];
+      slot.file = file || null;
+      slot.label = file ? `Selected: ${file.name}` : "No file selected.";
+      setUploadStatus(`cpu-multi-slot-status-${slot.id}`, slot.label, "muted");
+      updateCpuMultiSelectionSummary();
+    });
+  });
+}
+
+function updateCpuMultiSelectionSummary() {
+  const selected = cpuMultiSlots.filter((slot) => slot.file);
+  if (selected.length === 0) {
+    cpuMultiSelectionStatus = "No files selected.";
+    cpuMultiSelectionTone = "muted";
+  } else {
+    cpuMultiSelectionStatus = `Selected ${selected.length} slots: ${selected.map((slot) => slot.file.name).join(", ")}`;
+    cpuMultiSelectionTone = "muted";
+  }
+  setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
+}
+
 function renderState(state) {
   currentState = state;
   document.getElementById("table-message").textContent = state.table_message;
@@ -498,6 +538,7 @@ function renderState(state) {
   renderHistory(state.history);
   renderHeroWinRate(state);
   renderCpuConfig(state.players);
+  renderCpuMultiSlots();
   setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
   setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
   if (!document.getElementById("cpu-match-result").innerHTML) {
@@ -528,7 +569,7 @@ async function refreshState() {
         active.id.startsWith("cpu-file-") ||
         active.id === "cpu-match-hero-file" ||
         active.id === "cpu-match-villain-file" ||
-        active.id === "cpu-multi-files"
+        active.id.startsWith("cpu-multi-file-")
       )
     ) {
       return;
@@ -627,18 +668,20 @@ document.getElementById("run-cpu-match-btn").addEventListener("click", async () 
 document.getElementById("run-cpu-multi-btn").addEventListener("click", async () => {
   if (requestInFlight) return;
   try {
-    const files = Array.from(document.getElementById("cpu-multi-files").files || []);
-    if (files.length < 2) {
+    const slotsWithFiles = cpuMultiSlots.filter((slot) => slot.file);
+    if (slotsWithFiles.length < 2) {
       throw new Error("Select at least two .py files.");
     }
-    cpuMultiSelectionStatus = `Uploading ${files.length} files...`;
+    cpuMultiSelectionStatus = `Uploading ${slotsWithFiles.length} files...`;
     cpuMultiSelectionTone = "muted";
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     const uploaded = [];
-    for (const file of files) {
-      uploaded.push(await uploadCpuFile(file));
+    for (const slot of slotsWithFiles) {
+      uploaded.push(await uploadCpuFile(slot.file));
+      slot.label = `Uploaded: ${slot.file.name}`;
+      setUploadStatus(`cpu-multi-slot-status-${slot.id}`, slot.label, "success");
     }
-    cpuMultiSelectionStatus = `Uploaded ${files.length} files: ${files.map((file) => file.name).join(", ")}`;
+    cpuMultiSelectionStatus = `Uploaded ${slotsWithFiles.length} files: ${slotsWithFiles.map((slot) => slot.file.name).join(", ")}`;
     cpuMultiSelectionTone = "success";
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     const hands = Number(document.getElementById("cpu-multi-hands").value);
@@ -687,16 +730,18 @@ document.getElementById("cpu-match-villain-file").addEventListener("change", () 
   setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
 });
 
-document.getElementById("cpu-multi-files").addEventListener("change", () => {
-  const files = Array.from(document.getElementById("cpu-multi-files").files || []);
-  if (files.length > 0) {
-    cpuMultiSelectionStatus = `Selected ${files.length} files: ${files.map((file) => file.name).join(", ")}`;
-    cpuMultiSelectionTone = "muted";
-  } else {
-    cpuMultiSelectionStatus = "No files selected.";
-    cpuMultiSelectionTone = "muted";
-  }
-  setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
+document.getElementById("add-cpu-slot-btn").addEventListener("click", () => {
+  const nextId = cpuMultiSlots.length ? Math.max(...cpuMultiSlots.map((slot) => slot.id)) + 1 : 1;
+  cpuMultiSlots.push({ id: nextId, file: null, label: "No file selected." });
+  renderCpuMultiSlots();
+  updateCpuMultiSelectionSummary();
+});
+
+document.getElementById("remove-cpu-slot-btn").addEventListener("click", () => {
+  if (cpuMultiSlots.length <= 2) return;
+  cpuMultiSlots.pop();
+  renderCpuMultiSlots();
+  updateCpuMultiSelectionSummary();
 });
 
 refreshState();

@@ -140,12 +140,13 @@
         <div class="cpu-panel">
           <h2>CPU Multiplayer</h2>
           <p class="panel-note">
-            複数CPUを同時に卓へ座らせて自己対戦を回します。`.py` ファイルを複数選択してください。
+            複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で席を追加すると、同じ `.py` ファイルも何度でも使えます。
           </p>
-          <div class="amount-controls">
-            <label for="cpu-multi-files">CPU Files</label>
-            <input id="cpu-multi-files" type="file" accept=".py" multiple />
+          <div class="button-row">
+            <button id="add-cpu-slot-btn" class="ghost-btn">Add CPU Slot</button>
+            <button id="remove-cpu-slot-btn" class="ghost-btn">Remove CPU Slot</button>
           </div>
+          <div id="cpu-multi-slots" class="cpu-config-list"></div>
           <div class="setup-grid">
             <div class="amount-controls">
               <label for="cpu-multi-hands">Hands</label>
