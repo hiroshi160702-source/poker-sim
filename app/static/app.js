@@ -441,15 +441,28 @@ function renderCpuConfig(players) {
   cpuPlayers.forEach((player) => {
     document
       .getElementById(`cpu-file-${player.seat}`)
-      .addEventListener("change", (event) => {
+      .addEventListener("change", async (event) => {
         const file = event.target.files && event.target.files[0];
         setFreezeCpuPanels(Boolean(file));
-        if (file) {
-          uploadStatusBySeat[player.seat] = `Selected: ${file.name}`;
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Selected: ${file.name}`, "muted");
-        } else {
+        if (!file) {
           uploadStatusBySeat[player.seat] = "No file selected.";
           setUploadStatus(`cpu-upload-status-${player.seat}`, "No file selected.", "muted");
+          return;
+        }
+
+        try {
+          uploadStatusBySeat[player.seat] = `Uploading ${file.name}...`;
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploading ${file.name}...`, "muted");
+          const nextState = await uploadCpuFile(file, player.seat);
+          setFreezeCpuPanels(false);
+          uploadStatusBySeat[player.seat] = `Uploaded: ${file.name}`;
+          renderState(nextState);
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploaded: ${file.name}`, "success");
+        } catch (error) {
+          setFreezeCpuPanels(false);
+          uploadStatusBySeat[player.seat] = `Upload failed: ${error.message}`;
+          setUploadStatus(`cpu-upload-status-${player.seat}`, `Upload failed: ${error.message}`, "error");
+          alert(error.message);
         }
       });
     document
