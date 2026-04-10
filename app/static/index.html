@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="ja">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Texas Hold'em Simulator</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <main class="table-stage">
+        <section class="table-wrapper">
+          <div class="table-felt">
+            <div class="table-ring"></div>
+            <div class="table-center">
+              <div class="center-block">
+                <span class="center-label">Community</span>
+                <div id="community-cards" class="cards-row"></div>
+              </div>
+              <div class="center-block">
+                <span class="center-label">Pot</span>
+                <div id="pot-value" class="pot-value">0</div>
+              </div>
+              <div class="center-block">
+                <button id="reveal-folded-btn" class="ghost-btn">Reveal Folded Hands</button>
+              </div>
+            </div>
+
+            <div id="seat-0" class="seat seat-0"></div>
+            <div id="seat-1" class="seat seat-1"></div>
+            <div id="seat-2" class="seat seat-2"></div>
+            <div id="seat-3" class="seat seat-3"></div>
+            <div id="seat-4" class="seat seat-4"></div>
+            <div id="seat-5" class="seat seat-5"></div>
+            <div id="seat-6" class="seat seat-6"></div>
+            <div id="seat-7" class="seat seat-7"></div>
+            <div id="seat-8" class="seat seat-8"></div>
+          </div>
+        </section>
+      </main>
+
+      <aside class="panel controls-panel">
+        <div class="panel-header">
+          <p class="eyebrow">Simulator</p>
+          <h1>Texas Hold'em Table</h1>
+        </div>
+
+        <div class="hero-card">
+          <p id="table-message" class="table-message">Loading table...</p>
+          <div class="hero-meta">
+            <span id="phase-pill" class="pill">Waiting</span>
+            <span id="pot-pill" class="pill">Pot 0</span>
+          </div>
+        </div>
+
+        <div class="action-panel">
+          <h2>Your Move</h2>
+          <div id="turn-indicator" class="turn-indicator">Waiting for hand start</div>
+          <div class="amount-controls">
+            <label for="bet-amount">Bet / Raise To</label>
+            <input id="bet-amount" type="number" min="0" step="25" />
+          </div>
+          <div id="action-buttons" class="action-buttons"></div>
+        </div>
+
+        <div class="button-row">
+          <button id="new-hand-btn" class="primary-btn">Start / Next Hand</button>
+          <button id="reset-table-btn" class="ghost-btn">Reset Table</button>
+        </div>
+
+        <div class="cpu-panel">
+          <h2>Table Setup</h2>
+          <div class="setup-grid">
+            <div class="amount-controls">
+              <label for="starting-stack">Starting Stack</label>
+              <input id="starting-stack" type="number" min="500" max="50000" step="100" />
+            </div>
+            <div class="amount-controls">
+              <label for="cpu-count">CPU Players</label>
+              <select id="cpu-count">
+                <option value="1">1</option>
+                <option value="2">2</option>
+                <option value="3">3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+                <option value="6">6</option>
+                <option value="7">7</option>
+                <option value="8">8</option>
+              </select>
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="apply-setup-btn" class="primary-btn">Apply Setup</button>
+          </div>
+        </div>
+
+        <div class="cpu-panel">
+          <h2>CPU Files</h2>
+          <p class="panel-note">
+            各CPUは Python ファイルを読み込んで戦略を決定します。コードを貼った場合も `.py` として保存してから読み込みます。`decide_action(game_state, player_state, legal_actions)` を実装してください。
+          </p>
+          <div id="cpu-config-list" class="cpu-config-list"></div>
+        </div>
+
+        <div class="cpu-panel">
+          <h2>CPU vs CPU</h2>
+          <p class="panel-note">
+            2人戦の自己対戦を回して、勝敗集計や戦略表JSONの書き出しに使えます。
+          </p>
+          <div class="setup-grid">
+            <div class="amount-controls">
+              <label for="cpu-match-hero">Hero CPU Path</label>
+              <input id="cpu-match-hero" type="text" />
+            </div>
+            <div class="amount-controls">
+              <label for="cpu-match-villain">Villain CPU Path</label>
+              <input id="cpu-match-villain" type="text" />
+            </div>
+            <div class="amount-controls">
+              <label for="cpu-match-hands">Hands</label>
+              <input id="cpu-match-hands" type="number" min="1" max="5000" step="10" value="200" />
+            </div>
+            <div class="amount-controls">
+              <label for="cpu-match-export">Export Strategy JSON</label>
+              <input id="cpu-match-export" type="text" placeholder="/Users/.../generated_strategy.json" />
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="run-cpu-match-btn" class="primary-btn">Run CPU Match</button>
+          </div>
+        </div>
+
+        <div class="cpu-panel">
+          <h2>CPU Multiplayer</h2>
+          <p class="panel-note">
+            複数CPUを同時に卓へ座らせて自己対戦を回します。1行に1つずつ Python ファイルのパスを入れてください。
+          </p>
+          <div class="amount-controls">
+            <label for="cpu-multi-paths">CPU Paths</label>
+            <textarea id="cpu-multi-paths" spellcheck="false" placeholder="/Users/.../cpu1.py&#10;/Users/.../cpu2.py"></textarea>
+          </div>
+          <div class="setup-grid">
+            <div class="amount-controls">
+              <label for="cpu-multi-hands">Hands</label>
+              <input id="cpu-multi-hands" type="number" min="1" max="200000" step="10" value="500" />
+            </div>
+            <div class="amount-controls">
+              <label for="cpu-multi-export">Export Strategy JSON</label>
+              <input id="cpu-multi-export" type="text" placeholder="/Users/.../multi_generated_strategy.json" />
+            </div>
+          </div>
+          <div class="button-row">
+            <button id="run-cpu-multi-btn" class="primary-btn">Run Multiplayer Match</button>
+          </div>
+        </div>
+      </aside>
+
+      <aside class="panel info-panel">
+        <section class="stats-section">
+          <h2>Your Equity</h2>
+          <div id="hero-win-rate-card" class="hero-win-rate-card"></div>
+        </section>
+
+        <section class="stats-section">
+          <h2>Action Log</h2>
+          <div id="log-list" class="log-list"></div>
+        </section>
+
+        <section class="stats-section">
+          <h2>Recent Hands</h2>
+          <div id="history-list" class="history-list"></div>
+        </section>
+
+        <section class="stats-section">
+          <h2>CPU Match Result</h2>
+          <div id="cpu-match-result" class="history-list"></div>
+        </section>
+      </aside>
+    </div>
+
+    <script src="/static/app.js" defer></script>
+  </body>
+</html>

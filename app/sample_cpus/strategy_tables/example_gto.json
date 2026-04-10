@@ -1,0 +1,75 @@
+{
+  "preflop|blind|premium|none": {
+    "raise": 0.75,
+    "call": 0.15,
+    "all-in": 0.10
+  },
+  "preflop|blind|premium|small": {
+    "raise": 0.62,
+    "call": 0.30,
+    "all-in": 0.08
+  },
+  "preflop|late|strong|none": {
+    "raise": 0.58,
+    "call": 0.25,
+    "check": 0.17
+  },
+  "preflop|late|speculative|none": {
+    "raise": 0.24,
+    "call": 0.46,
+    "check": 0.30
+  },
+  "preflop|early|medium|small": {
+    "call": 0.58,
+    "fold": 0.22,
+    "raise": 0.20
+  },
+  "preflop|any|weak|large": {
+    "fold": 0.84,
+    "call": 0.16
+  },
+  "flop|late|made|none": {
+    "bet": 0.68,
+    "check": 0.32
+  },
+  "flop|any|made|small": {
+    "raise": 0.42,
+    "call": 0.50,
+    "fold": 0.08
+  },
+  "flop|any|draw|small": {
+    "call": 0.56,
+    "raise": 0.26,
+    "fold": 0.18
+  },
+  "flop|any|marginal|large": {
+    "fold": 0.74,
+    "call": 0.26
+  },
+  "turn|any|made|none": {
+    "bet": 0.72,
+    "check": 0.28
+  },
+  "turn|any|draw|small": {
+    "call": 0.54,
+    "raise": 0.16,
+    "fold": 0.30
+  },
+  "turn|any|air|large": {
+    "fold": 0.92,
+    "call": 0.08
+  },
+  "river|any|made|small": {
+    "raise": 0.30,
+    "call": 0.52,
+    "fold": 0.18
+  },
+  "river|any|marginal|none": {
+    "check": 0.84,
+    "bet": 0.16
+  },
+  "river|any|air|large": {
+    "fold": 0.95,
+    "call": 0.05
+  }
+}

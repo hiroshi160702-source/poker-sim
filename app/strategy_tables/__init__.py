@@ -1,0 +1,1 @@
+"""Strategy table helpers."""

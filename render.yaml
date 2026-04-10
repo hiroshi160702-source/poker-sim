@@ -1,0 +1,6 @@
+services:
+  - type: web
+    name: poker-sim
+    env: docker
+    plan: free
+    autoDeploy: true

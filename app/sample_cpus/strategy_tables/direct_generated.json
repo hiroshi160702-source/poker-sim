@@ -1,0 +1,29 @@
+{
+  "preflop|blind|medium|small": {
+    "call": 1.0
+  },
+  "preflop|blind|strong|small": {
+    "raise": 1.0
+  },
+  "preflop|blind|weak|large": {
+    "fold": 1.0
+  },
+  "preflop|blind|weak|small": {
+    "fold": 1.0
+  },
+  "preflop|late|medium|small": {
+    "fold": 1.0
+  },
+  "preflop|late|strong|small": {
+    "raise": 1.0
+  },
+  "preflop|late|weak|large": {
+    "fold": 1.0
+  },
+  "preflop|late|weak|none": {
+    "check": 1.0
+  },
+  "preflop|late|weak|small": {
+    "fold": 1.0
+  }
+}

@@ -1,0 +1,8 @@
+.git
+__pycache__
+*.pyc
+.DS_Store
+logs
+embedded_cpus
+.poker-sim.log
+.poker-sim.pid
