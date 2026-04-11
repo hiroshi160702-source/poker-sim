@@ -13,19 +13,7 @@ let currentState = null;
 let revealFoldedHands = false;
 let requestInFlight = false;
 let lastRaiseBounds = null;
-const defaultCpuCode = `def decide_action(game_state, player_state, legal_actions):
-    # Return one of: fold, check, call, bet, raise, all-in
-    for preferred in ("check", "call", "fold", "all-in"):
-        for action in legal_actions:
-            if action["type"] == preferred:
-                payload = {"type": preferred}
-                if "amount" in action:
-                    payload["amount"] = action["amount"]
-                return payload
-
-    first = legal_actions[0]
-    return {"type": first["type"], "amount": first.get("amount")}
-`;
+const defaultCpuCode = "";
 const uploadStatusBySeat = {};
 let cpuMultiSelectionStatus = "No files selected.";
 let cpuMultiSelectionTone = "muted";
@@ -34,6 +22,8 @@ let cpuMultiSlots = [
   { id: 2, file: null, label: "No file selected." },
 ];
 let freezeCpuPanels = false;
+let cpuConfigSignature = null;
+let cpuMultiSlotsSignature = null;
 
 function setUploadStatus(elementId, message, tone = "muted") {
   const node = document.getElementById(elementId);
@@ -472,6 +462,16 @@ function renderCpuConfig(players) {
   });
 }
 
+function ensureCpuConfigRendered(players) {
+  const cpuPlayers = players.filter((player) => !player.is_human);
+  const nextSignature = cpuPlayers.map((player) => `${player.seat}:${player.name}`).join("|");
+  if (cpuConfigSignature === nextSignature && document.getElementById("cpu-config-list").children.length > 0) {
+    return;
+  }
+  cpuConfigSignature = nextSignature;
+  renderCpuConfig(players);
+}
+
 function renderCpuMultiSlots() {
   const container = document.getElementById("cpu-multi-slots");
   container.innerHTML = cpuMultiSlots
@@ -496,6 +496,15 @@ function renderCpuMultiSlots() {
       updateCpuMultiSelectionSummary();
     });
   });
+}
+
+function ensureCpuMultiSlotsRendered() {
+  const nextSignature = cpuMultiSlots.map((slot) => slot.id).join("|");
+  if (cpuMultiSlotsSignature === nextSignature && document.getElementById("cpu-multi-slots").children.length > 0) {
+    return;
+  }
+  cpuMultiSlotsSignature = nextSignature;
+  renderCpuMultiSlots();
 }
 
 function updateCpuMultiSelectionSummary() {
@@ -528,8 +537,8 @@ function renderState(state) {
   renderHistory(state.history);
   renderHeroWinRate(state);
   if (!freezeCpuPanels) {
-    renderCpuConfig(state.players);
-    renderCpuMultiSlots();
+    ensureCpuConfigRendered(state.players);
+    ensureCpuMultiSlotsRendered();
   }
   setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
   if (!document.getElementById("cpu-match-result").innerHTML) {
@@ -663,6 +672,7 @@ document.getElementById("add-cpu-slot-btn").addEventListener("click", () => {
   setFreezeCpuPanels(true);
   const nextId = cpuMultiSlots.length ? Math.max(...cpuMultiSlots.map((slot) => slot.id)) + 1 : 1;
   cpuMultiSlots.push({ id: nextId, file: null, label: "No file selected." });
+  cpuMultiSlotsSignature = null;
   renderCpuMultiSlots();
   updateCpuMultiSelectionSummary();
 });
@@ -671,6 +681,7 @@ document.getElementById("remove-cpu-slot-btn").addEventListener("click", () => {
   if (cpuMultiSlots.length <= 2) return;
   setFreezeCpuPanels(true);
   cpuMultiSlots.pop();
+  cpuMultiSlotsSignature = null;
   renderCpuMultiSlots();
   updateCpuMultiSelectionSummary();
 });
