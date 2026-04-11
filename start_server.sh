@@ -15,8 +15,23 @@ if [[ -f "$PID_FILE" ]]; then
 fi
 
 cd "$SCRIPT_DIR"
-python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000 >"$LOG_FILE" 2>&1 < /dev/null &
-PID=$!
-disown
+PID=$(python3 - <<'PY'
+import subprocess
+from pathlib import Path
+
+script_dir = Path.cwd()
+log_file = script_dir / ".poker-sim.log"
+with log_file.open("ab") as stream:
+    process = subprocess.Popen(
+        ["python3", "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"],
+        cwd=str(script_dir),
+        stdout=stream,
+        stderr=subprocess.STDOUT,
+        stdin=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+print(process.pid)
+PY
+)
 echo "$PID" > "$PID_FILE"
 echo "Server started: http://127.0.0.1:8000 (PID $PID)"
