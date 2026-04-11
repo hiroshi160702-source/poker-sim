@@ -3,6 +3,10 @@
 テキサスホールデムをブラウザで遊べるシミュレーションゲームです。  
 人間 vs CPU だけでなく、CPU 同士のマルチプレイ自己対戦や戦略表の生成にも対応しています。
 
+Live Demo:
+
+- https://poker-sim.onrender.com/
+
 Repository:
 
 - https://github.com/hiroshi160702-source/poker-sim
