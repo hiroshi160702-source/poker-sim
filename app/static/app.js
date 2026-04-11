@@ -6,7 +6,6 @@ const uploadCpuFileUrl = "/api/upload-cpu-file";
 const saveCpuCodeUrl = "/api/save-cpu-code";
 const resetTableUrl = "/api/reset-table";
 const configureTableUrl = "/api/configure-table";
-const cpuMatchUrl = "/api/run-cpu-match";
 const cpuMultiMatchUrl = "/api/run-cpu-multiplayer";
 
 const seatIds = [0, 1, 2, 3, 4, 5, 6, 7, 8];
@@ -28,8 +27,6 @@ const defaultCpuCode = `def decide_action(game_state, player_state, legal_action
     return {"type": first["type"], "amount": first.get("amount")}
 `;
 const uploadStatusBySeat = {};
-let cpuMatchSelectionStatus = "No files selected.";
-let cpuMatchSelectionTone = "muted";
 let cpuMultiSelectionStatus = "No files selected.";
 let cpuMultiSelectionTone = "muted";
 let cpuMultiSlots = [
@@ -48,11 +45,7 @@ function setUploadStatus(elementId, message, tone = "muted") {
 function hasPendingFileSelection() {
   const perSeatFiles = Array.from(document.querySelectorAll('input[id^="cpu-file-"]'))
     .some((input) => input.files && input.files.length > 0);
-  const matchHero = document.getElementById("cpu-match-hero-file");
-  const matchVillain = document.getElementById("cpu-match-villain-file");
   return perSeatFiles
-    || Boolean(matchHero && matchHero.files && matchHero.files.length > 0)
-    || Boolean(matchVillain && matchVillain.files && matchVillain.files.length > 0)
     || cpuMultiSlots.some((slot) => Boolean(slot.file));
 }
 
@@ -342,65 +335,39 @@ function renderCpuMatchResult(result) {
     document.getElementById("cpu-match-result").innerHTML = `<div class="list-card">No self-play run yet.</div>`;
     return;
   }
-  if (result.leaderboard) {
-    const leaderboard = result.leaderboard
-      .map(
-        (player) => `
-          <div class="list-card">
-            <strong>${player.name}</strong>
-            <div>Wins ${player.wins}</div>
-            <div>Profit ${player.profit}</div>
-            <div>1st ${player.first_places} (${player.first_place_rate}%)</div>
-            <div>Avg / hand ${player.avg_profit}</div>
-            <div>${player.cpu_path}</div>
-          </div>
-        `
-      )
-      .join("");
-    const seatStats = (result.seat_stats || [])
-      .map(
-        (seat) => `
-          <div class="list-card">
-            <strong>Seat ${seat.seat}: ${seat.name}</strong>
-            <div>Wins ${seat.wins}</div>
-            <div>1st ${seat.first_places} (${seat.first_place_rate}%)</div>
-            <div>Avg / hand ${seat.avg_profit}</div>
-            <div>Total profit ${seat.profit}</div>
-          </div>
-        `
-      )
-      .join("");
-    const recent = (result.recent_results || [])
-      .map(
-        (item) => `
-          <div class="list-card">
-            <strong>Hand #${item.hand_id}</strong>
-            <div>${(item.players || []).map((player) => `${player.name} ${player.delta}`).join(" / ")}</div>
-            <div>${item.message}</div>
-          </div>
-        `
-      )
-      .join("");
-    document.getElementById("cpu-match-result").innerHTML = `
-      <div class="list-card">
-        <strong>${result.player_count} Players Multiplayer</strong>
-        <div>Hands ${result.hands}</div>
-        <div>Visited infosets ${result.visited_infosets}</div>
-        <div>Phases ${Object.entries(result.phase_breakdown || {}).map(([phase, count]) => `${phase} ${count}`).join(" / ")}</div>
-        ${result.exported_strategy_path ? `<div>Exported: ${result.exported_strategy_path}</div>` : ""}
-      </div>
-      ${leaderboard}
-      ${seatStats}
-      ${recent || `<div class="list-card">No recent result.</div>`}
-    `;
-    return;
-  }
+  const leaderboard = (result.leaderboard || [])
+    .map(
+      (player) => `
+        <div class="list-card">
+          <strong>${player.name}</strong>
+          <div>Wins ${player.wins}</div>
+          <div>Profit ${player.profit}</div>
+          <div>1st ${player.first_places} (${player.first_place_rate}%)</div>
+          <div>Avg / hand ${player.avg_profit}</div>
+          <div>${player.cpu_path}</div>
+        </div>
+      `
+    )
+    .join("");
+  const seatStats = (result.seat_stats || [])
+    .map(
+      (seat) => `
+        <div class="list-card">
+          <strong>Seat ${seat.seat}: ${seat.name}</strong>
+          <div>Wins ${seat.wins}</div>
+          <div>1st ${seat.first_places} (${seat.first_place_rate}%)</div>
+          <div>Avg / hand ${seat.avg_profit}</div>
+          <div>Total profit ${seat.profit}</div>
+        </div>
+      `
+    )
+    .join("");
   const recent = (result.recent_results || [])
     .map(
       (item) => `
         <div class="list-card">
           <strong>Hand #${item.hand_id}</strong>
-          <div>Hero ${item.hero_delta} / Villain ${item.villain_delta}</div>
+          <div>${(item.players || []).map((player) => `${player.name} ${player.delta}`).join(" / ")}</div>
           <div>${item.message}</div>
         </div>
       `
@@ -408,12 +375,14 @@ function renderCpuMatchResult(result) {
     .join("");
   document.getElementById("cpu-match-result").innerHTML = `
     <div class="list-card">
-      <strong>${result.hero_name} vs ${result.villain_name}</strong>
+      <strong>${result.player_count} Players Multiplayer</strong>
       <div>Hands ${result.hands}</div>
-      <div>Hero wins ${result.hero_wins} / Villain wins ${result.villain_wins} / Draws ${result.draws}</div>
-      <div>Hero profit ${result.hero_profit} / Villain profit ${result.villain_profit}</div>
+      <div>Visited infosets ${result.visited_infosets}</div>
+      <div>Phases ${Object.entries(result.phase_breakdown || {}).map(([phase, count]) => `${phase} ${count}`).join(" / ")}</div>
       ${result.exported_strategy_path ? `<div>Exported: ${result.exported_strategy_path}</div>` : ""}
     </div>
+    ${leaderboard}
+    ${seatStats}
     ${recent || `<div class="list-card">No recent result.</div>`}
   `;
 }
@@ -562,7 +531,6 @@ function renderState(state) {
     renderCpuConfig(state.players);
     renderCpuMultiSlots();
   }
-  setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
   setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
   if (!document.getElementById("cpu-match-result").innerHTML) {
     renderCpuMatchResult(null);
@@ -590,8 +558,6 @@ async function refreshState() {
         active.id.startsWith("cpu-path-") ||
         active.id.startsWith("cpu-code-") ||
         active.id.startsWith("cpu-file-") ||
-        active.id === "cpu-match-hero-file" ||
-        active.id === "cpu-match-villain-file" ||
         active.id.startsWith("cpu-multi-file-")
       )
     ) {
@@ -651,46 +617,6 @@ document.getElementById("reveal-folded-btn").addEventListener("click", async () 
   await refreshState();
 });
 
-document.getElementById("run-cpu-match-btn").addEventListener("click", async () => {
-  if (requestInFlight) return;
-  try {
-    const heroFile = document.getElementById("cpu-match-hero-file").files[0];
-    const villainFile = document.getElementById("cpu-match-villain-file").files[0];
-    if (!heroFile || !villainFile) {
-      throw new Error("Select both hero and villain .py files.");
-    }
-    setFreezeCpuPanels(true);
-    cpuMatchSelectionStatus = `Uploading ${heroFile.name} and ${villainFile.name}...`;
-    cpuMatchSelectionTone = "muted";
-    setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
-    const heroUpload = await uploadCpuFile(heroFile);
-    const villainUpload = await uploadCpuFile(villainFile);
-    setFreezeCpuPanels(false);
-    cpuMatchSelectionStatus = `Uploaded hero: ${heroFile.name} / villain: ${villainFile.name}`;
-    cpuMatchSelectionTone = "success";
-    setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
-    const hands = Number(document.getElementById("cpu-match-hands").value);
-    const exportStrategyPath = document.getElementById("cpu-match-export").value.trim();
-    const result = await apiFetch(cpuMatchUrl, {
-      method: "POST",
-      body: JSON.stringify({
-        hero_cpu_path: heroUpload.uploaded_cpu_path,
-        villain_cpu_path: villainUpload.uploaded_cpu_path,
-        hands,
-        starting_stack: Number(document.getElementById("starting-stack").value),
-        export_strategy_path: exportStrategyPath || null,
-      }),
-    });
-    renderCpuMatchResult(result);
-  } catch (error) {
-    setFreezeCpuPanels(false);
-    cpuMatchSelectionStatus = `Upload failed: ${error.message}`;
-    cpuMatchSelectionTone = "error";
-    setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
-    alert(error.message);
-  }
-});
-
 document.getElementById("run-cpu-multi-btn").addEventListener("click", async () => {
   if (requestInFlight) return;
   try {
@@ -731,34 +657,6 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     alert(error.message);
   }
-});
-
-document.getElementById("cpu-match-hero-file").addEventListener("change", () => {
-  const hero = document.getElementById("cpu-match-hero-file").files[0];
-  const villain = document.getElementById("cpu-match-villain-file").files[0];
-  setFreezeCpuPanels(Boolean(hero || villain));
-  if (hero || villain) {
-    cpuMatchSelectionStatus = `Selected: ${hero ? hero.name : "Hero missing"} / ${villain ? villain.name : "Villain missing"}`;
-    cpuMatchSelectionTone = "muted";
-  } else {
-    cpuMatchSelectionStatus = "No files selected.";
-    cpuMatchSelectionTone = "muted";
-  }
-  setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
-});
-
-document.getElementById("cpu-match-villain-file").addEventListener("change", () => {
-  const hero = document.getElementById("cpu-match-hero-file").files[0];
-  const villain = document.getElementById("cpu-match-villain-file").files[0];
-  setFreezeCpuPanels(Boolean(hero || villain));
-  if (hero || villain) {
-    cpuMatchSelectionStatus = `Selected: ${hero ? hero.name : "Hero missing"} / ${villain ? villain.name : "Villain missing"}`;
-    cpuMatchSelectionTone = "muted";
-  } else {
-    cpuMatchSelectionStatus = "No files selected.";
-    cpuMatchSelectionTone = "muted";
-  }
-  setUploadStatus("cpu-match-upload-status", cpuMatchSelectionStatus, cpuMatchSelectionTone);
 });
 
 document.getElementById("add-cpu-slot-btn").addEventListener("click", () => {

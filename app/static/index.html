@@ -109,35 +109,6 @@
         </div>
 
         <div class="cpu-panel">
-          <h2>CPU vs CPU</h2>
-          <p class="panel-note">
-            2人戦の自己対戦を回して、勝敗集計や戦略表JSONの書き出しに使えます。`.py` ファイルを選ぶとアップロードしてから実行します。
-          </p>
-          <div class="setup-grid">
-            <div class="amount-controls">
-              <label for="cpu-match-hero-file">Hero CPU File</label>
-              <input id="cpu-match-hero-file" type="file" accept=".py" />
-            </div>
-            <div class="amount-controls">
-              <label for="cpu-match-villain-file">Villain CPU File</label>
-              <input id="cpu-match-villain-file" type="file" accept=".py" />
-            </div>
-            <div class="amount-controls">
-              <label for="cpu-match-hands">Hands</label>
-              <input id="cpu-match-hands" type="number" min="1" max="5000" step="10" value="200" />
-            </div>
-            <div class="amount-controls">
-              <label for="cpu-match-export">Export Strategy JSON</label>
-              <input id="cpu-match-export" type="text" placeholder="/Users/.../generated_strategy.json" />
-            </div>
-          </div>
-          <div class="button-row">
-            <button id="run-cpu-match-btn" class="primary-btn">Run CPU Match</button>
-          </div>
-          <div id="cpu-match-upload-status" class="upload-status muted">No files selected.</div>
-        </div>
-
-        <div class="cpu-panel">
           <h2>CPU Multiplayer</h2>
           <p class="panel-note">
             複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で席を追加すると、同じ `.py` ファイルも何度でも使えます。
@@ -181,7 +152,7 @@
         </section>
 
         <section class="stats-section">
-          <h2>CPU Match Result</h2>
+          <h2>CPU Self-Play Result</h2>
           <div id="cpu-match-result" class="history-list"></div>
         </section>
       </aside>

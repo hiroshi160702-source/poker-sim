@@ -11,7 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .engine import HoldemGame
-from .selfplay import run_heads_up_cpu_match, run_multiway_cpu_match
+from .selfplay import run_multiway_cpu_match
 
 BASE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = BASE_DIR / "static"
@@ -40,14 +40,6 @@ class TableConfigRequest(BaseModel):
 class EmbeddedCpuRequest(BaseModel):
     seat: int
     code: str
-
-
-class CpuMatchRequest(BaseModel):
-    hero_cpu_path: str
-    villain_cpu_path: str
-    hands: int = 100
-    starting_stack: int = 2000
-    export_strategy_path: Optional[str] = None
 
 
 class CpuMultiMatchRequest(BaseModel):
@@ -157,22 +149,6 @@ async def upload_cpu_file(
         return {"uploaded_cpu_path": str(saved_path)}
     except HTTPException:
         raise
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
-@app.post("/api/run-cpu-match")
-async def run_cpu_match(request: CpuMatchRequest) -> dict:
-    try:
-        return run_heads_up_cpu_match(
-            logs_dir=LOGS_DIR,
-            embedded_cpu_dir=EMBEDDED_CPU_DIR,
-            hero_cpu_path=request.hero_cpu_path,
-            villain_cpu_path=request.villain_cpu_path,
-            hands=request.hands,
-            starting_stack=request.starting_stack,
-            export_strategy_path=request.export_strategy_path,
-        )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 

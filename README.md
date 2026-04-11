@@ -1,7 +1,11 @@
 # Texas Hold'em Simulator
 
 テキサスホールデムをブラウザで遊べるシミュレーションゲームです。  
-人間 vs CPU だけでなく、CPU 同士のヘッズアップ対戦やマルチプレイ自己対戦、戦略表の生成にも対応しています。
+人間 vs CPU だけでなく、CPU 同士のマルチプレイ自己対戦や戦略表の生成にも対応しています。
+
+Repository:
+
+- https://github.com/hiroshi160702-source/poker-sim
 
 ## Features
 
@@ -12,7 +16,6 @@
 - CPU を Python ファイルで差し替え可能
 - `.py` ファイルを画面からアップロードして読み込み可能
 - CPU コードを画面から保存して読み込み可能
-- CPU vs CPU の自己対戦
 - マルチプレイ自己対戦と戦略表の書き出し
 
 ## Quick Start
@@ -82,17 +85,6 @@ def decide_action(game_state, player_state, legal_actions):
 - [table_builder_agent.py](app/sample_cpus/table_builder_agent.py)
 
 ## Self-Play
-
-### Heads-up
-
-画面の `CPU vs CPU` から 2 人対戦を実行できます。`.py` ファイルを選ぶと内部にアップロードしてから実行します。
-
-- Hero CPU path
-- Villain CPU path
-- Hands
-- Export Strategy JSON
-
-### Multiplayer
 
 画面の `CPU Multiplayer` から複数 CPU の `.py` ファイルを同時に対戦させられます。  
 結果には次が含まれます。
