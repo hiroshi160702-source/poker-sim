@@ -106,13 +106,16 @@ def run_heads_up_cpu_match(
     stats["phase_breakdown"] = dict(sorted(phase_visits.items()))
 
     if export_strategy_path:
+        strategy_table = to_probability_table(action_counts, infoset_visits)
         export_path = Path(export_strategy_path).expanduser().resolve()
         export_path.parent.mkdir(parents=True, exist_ok=True)
         export_path.write_text(
-            json.dumps(to_probability_table(action_counts, infoset_visits), indent=2, ensure_ascii=False),
+            json.dumps(strategy_table, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         stats["exported_strategy_path"] = str(export_path)
+        stats["strategy_table"] = strategy_table
+        stats["strategy_table_filename"] = export_path.name
 
     return stats
 

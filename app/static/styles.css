@@ -285,6 +285,11 @@ button:disabled {
   opacity: 0.52;
 }
 
+.seat.out {
+  opacity: 0.42;
+  filter: saturate(0.62);
+}
+
 .seat-header,
 .seat-footer {
   display: flex;
@@ -535,6 +540,15 @@ button:disabled {
   color: var(--muted);
   line-height: 1.5;
   margin: 8px 0 0;
+}
+
+.selfplay-note {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .upload-status {

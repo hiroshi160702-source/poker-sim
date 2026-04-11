@@ -1,9 +1,7 @@
 const stateUrl = "/api/state";
 const newHandUrl = "/api/new-hand";
 const actionUrl = "/api/action";
-const loadCpuUrl = "/api/load-cpu";
 const uploadCpuFileUrl = "/api/upload-cpu-file";
-const saveCpuCodeUrl = "/api/save-cpu-code";
 const resetTableUrl = "/api/reset-table";
 const configureTableUrl = "/api/configure-table";
 const cpuMultiMatchUrl = "/api/run-cpu-multiplayer";
@@ -24,6 +22,8 @@ let cpuMultiSlots = [
 let freezeCpuPanels = false;
 let cpuConfigSignature = null;
 let cpuMultiSlotsSignature = null;
+let lastStrategyTable = null;
+let lastStrategyFilename = "strategy_table.json";
 
 function setUploadStatus(elementId, message, tone = "muted") {
   const node = document.getElementById(elementId);
@@ -158,6 +158,19 @@ function actionStatusClass(action) {
   return "neutral";
 }
 
+function downloadStrategyTable() {
+  if (!lastStrategyTable) return;
+  const blob = new Blob([JSON.stringify(lastStrategyTable, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = lastStrategyFilename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function renderSeats(players) {
   const totalPlayers = players.length;
   seatIds.forEach((seatId) => {
@@ -184,7 +197,7 @@ function renderSeats(players) {
     const radiusY = totalPlayers >= 8 ? 39 : 34;
     const x = centerX + Math.cos(angle) * radiusX;
     const y = centerY - Math.sin(angle) * radiusY;
-    node.className = `seat ${player.is_current_turn ? "current-turn" : ""} ${player.folded ? "folded" : ""} seat-${player.seat}`;
+    node.className = `seat ${player.is_current_turn ? "current-turn" : ""} ${player.folded ? "folded" : ""} ${!player.in_hand ? "out" : ""} seat-${player.seat}`;
     node.style.left = `${x}%`;
     node.style.top = `${y}%`;
     node.style.transform = "translate(-50%, -50%)";
@@ -322,9 +335,17 @@ function renderHeroWinRate(state) {
 
 function renderCpuMatchResult(result) {
   if (!result) {
+    document.getElementById("cpu-selfplay-summary").textContent = "結果はここに表示されます。";
+    document.getElementById("download-strategy-btn").disabled = true;
+    lastStrategyTable = null;
     document.getElementById("cpu-match-result").innerHTML = `<div class="list-card">No self-play run yet.</div>`;
     return;
   }
+  document.getElementById("cpu-selfplay-summary").textContent =
+    `${result.player_count} 人で ${result.hands} ハンド自動対戦しました。順位表と最近の結果を下に表示しています。`;
+  lastStrategyTable = result.strategy_table || null;
+  lastStrategyFilename = result.strategy_table_filename || "strategy_table.json";
+  document.getElementById("download-strategy-btn").disabled = !lastStrategyTable;
   const leaderboard = (result.leaderboard || [])
     .map(
       (player) => `
@@ -364,13 +385,14 @@ function renderCpuMatchResult(result) {
     )
     .join("");
   document.getElementById("cpu-match-result").innerHTML = `
-    <div class="list-card">
-      <strong>${result.player_count} Players Multiplayer</strong>
-      <div>Hands ${result.hands}</div>
-      <div>Visited infosets ${result.visited_infosets}</div>
-      <div>Phases ${Object.entries(result.phase_breakdown || {}).map(([phase, count]) => `${phase} ${count}`).join(" / ")}</div>
-      ${result.exported_strategy_path ? `<div>Exported: ${result.exported_strategy_path}</div>` : ""}
-    </div>
+      <div class="list-card">
+        <strong>${result.player_count} Players Multiplayer</strong>
+        <div>Hands ${result.hands}</div>
+        <div>Visited infosets ${result.visited_infosets}</div>
+        <div>Phases ${Object.entries(result.phase_breakdown || {}).map(([phase, count]) => `${phase} ${count}`).join(" / ")}</div>
+        ${result.exported_strategy_path ? `<div>Exported: ${result.exported_strategy_path}</div>` : ""}
+        ${lastStrategyTable ? `<div>Strategy table is ready to download.</div>` : ""}
+      </div>
     ${leaderboard}
     ${seatStats}
     ${recent || `<div class="list-card">No recent result.</div>`}
@@ -384,14 +406,9 @@ function renderCpuConfig(players) {
       (player) => `
         <div class="cpu-config">
           <strong>${player.name}</strong>
-          <input id="cpu-path-${player.seat}" type="text" value="${player.cpu_path || ""}" />
           <input id="cpu-file-${player.seat}" type="file" accept=".py" />
           <div id="cpu-upload-status-${player.seat}" class="upload-status muted">${uploadStatusBySeat[player.seat] || "No file selected."}</div>
-          <textarea id="cpu-code-${player.seat}" spellcheck="false" placeholder="def decide_action(game_state, player_state, legal_actions):\n    ...">${defaultCpuCode}</textarea>
-          <div class="cpu-config-actions">
-            <button data-upload-seat="${player.seat}">Upload .py File</button>
-            <button data-save-seat="${player.seat}">Save as Python File</button>
-          </div>
+          <div class="panel-note">Current: ${player.cpu_path || "No CPU loaded."}</div>
         </div>
       `
     )
@@ -421,41 +438,6 @@ function renderCpuConfig(players) {
           setFreezeCpuPanels(false);
           uploadStatusBySeat[player.seat] = `Upload failed: ${error.message}`;
           setUploadStatus(`cpu-upload-status-${player.seat}`, `Upload failed: ${error.message}`, "error");
-          alert(error.message);
-        }
-      });
-    document
-      .querySelector(`button[data-upload-seat="${player.seat}"]`)
-      .addEventListener("click", async () => {
-        try {
-          const input = document.getElementById(`cpu-file-${player.seat}`);
-          const file = input.files && input.files[0];
-          if (!file) {
-            throw new Error("Select a .py file first.");
-          }
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploading ${file.name}...`, "muted");
-          const nextState = await uploadCpuFile(file, player.seat);
-          setFreezeCpuPanels(false);
-          uploadStatusBySeat[player.seat] = `Uploaded: ${file.name}`;
-          renderState(nextState);
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploaded: ${file.name}`, "success");
-        } catch (error) {
-          uploadStatusBySeat[player.seat] = `Upload failed: ${error.message}`;
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Upload failed: ${error.message}`, "error");
-          alert(error.message);
-        }
-      });
-    document
-      .querySelector(`button[data-save-seat="${player.seat}"]`)
-      .addEventListener("click", async () => {
-        const code = document.getElementById(`cpu-code-${player.seat}`).value;
-        try {
-          const nextState = await apiFetch(saveCpuCodeUrl, {
-            method: "POST",
-            body: JSON.stringify({ seat: player.seat, code }),
-          });
-          renderState(nextState);
-        } catch (error) {
           alert(error.message);
         }
       });
@@ -637,6 +619,8 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
     cpuMultiSelectionStatus = `Uploading ${slotsWithFiles.length} files...`;
     cpuMultiSelectionTone = "muted";
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
+    document.getElementById("cpu-selfplay-summary").textContent = "自己対戦を実行中です。完了すると結果が表示されます。";
+    document.getElementById("download-strategy-btn").disabled = true;
     const uploaded = [];
     for (const slot of slotsWithFiles) {
       uploaded.push(await uploadCpuFile(slot.file));
@@ -685,6 +669,8 @@ document.getElementById("remove-cpu-slot-btn").addEventListener("click", () => {
   renderCpuMultiSlots();
   updateCpuMultiSelectionSummary();
 });
+
+document.getElementById("download-strategy-btn").addEventListener("click", downloadStrategyTable);
 
 refreshState();
 setInterval(refreshState, 6000);

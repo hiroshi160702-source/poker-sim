@@ -19,7 +19,6 @@ Repository:
 - アクションログとハンド履歴
 - CPU を Python ファイルで差し替え可能
 - `.py` ファイルを画面からアップロードして読み込み可能
-- CPU コードを画面から保存して読み込み可能
 - マルチプレイ自己対戦と戦略表の書き出し
 
 ## Quick Start
@@ -90,7 +89,7 @@ def decide_action(game_state, player_state, legal_actions):
 
 ## Self-Play
 
-画面の `CPU Multiplayer` から複数 CPU の `.py` ファイルを同時に対戦させられます。  
+画面の `CPU Multiplayer` から複数 CPU の `.py` ファイルを同時に対戦させられます。`Add CPU Slot` を使うと、同じ戦略ファイルも複数席へ入れられます。  
 結果には次が含まれます。
 
 - 勝利数
@@ -98,6 +97,7 @@ def decide_action(game_state, player_state, legal_actions):
 - 1 位回数と 1 位率
 - 1 ハンドあたり平均獲得チップ
 - 席順ごとの成績
+- 戦略表ダウンロード
 
 ## Strategy Tables
 

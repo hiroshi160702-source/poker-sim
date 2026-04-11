@@ -103,7 +103,7 @@
         <div class="cpu-panel">
           <h2>CPU Files</h2>
           <p class="panel-note">
-            各CPUは Python ファイルを読み込んで戦略を決定します。コードを貼った場合も `.py` として保存してから読み込みます。`decide_action(game_state, player_state, legal_actions)` を実装してください。
+            各CPUは `.py` ファイルをアップロードして戦略を差し替えます。ファイルを選ぶとその席へ自動反映されます。
           </p>
           <div id="cpu-config-list" class="cpu-config-list"></div>
         </div>
@@ -113,6 +113,9 @@
           <p class="panel-note">
             複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で席を追加すると、同じ `.py` ファイルも何度でも使えます。
           </p>
+          <div class="selfplay-note">
+            `Run Multiplayer Match` を押すと、指定したハンド数だけCPU同士で自動対戦し、順位表・最近の結果・戦略表生成結果を表示します。
+          </div>
           <div class="button-row">
             <button id="add-cpu-slot-btn" class="ghost-btn">Add CPU Slot</button>
             <button id="remove-cpu-slot-btn" class="ghost-btn">Remove CPU Slot</button>
@@ -153,6 +156,10 @@
 
         <section class="stats-section">
           <h2>CPU Self-Play Result</h2>
+          <div id="cpu-selfplay-summary" class="panel-note">結果はここに表示されます。</div>
+          <div class="button-row">
+            <button id="download-strategy-btn" class="ghost-btn" disabled>Download Strategy Table</button>
+          </div>
           <div id="cpu-match-result" class="history-list"></div>
         </section>
       </aside>
