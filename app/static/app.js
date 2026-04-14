@@ -5,6 +5,8 @@ const uploadCpuFileUrl = "/api/upload-cpu-file";
 const resetTableUrl = "/api/reset-table";
 const configureTableUrl = "/api/configure-table";
 const cpuMultiMatchUrl = "/api/run-cpu-multiplayer";
+const cpuMultiStartUrl = "/api/start-cpu-multiplayer";
+const cpuMultiJobBaseUrl = "/api/cpu-multiplayer-jobs";
 
 const seatIds = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 let currentState = null;
@@ -16,14 +18,16 @@ const uploadStatusBySeat = {};
 let cpuMultiSelectionStatus = "No files selected.";
 let cpuMultiSelectionTone = "muted";
 let cpuMultiSlots = [
-  { id: 1, file: null, label: "No file selected." },
-  { id: 2, file: null, label: "No file selected." },
+  { id: 1, file: null, count: 1, label: "No file selected." },
+  { id: 2, file: null, count: 1, label: "No file selected." },
 ];
 let freezeCpuPanels = false;
 let cpuConfigSignature = null;
 let cpuMultiSlotsSignature = null;
 let lastStrategyTable = null;
 let lastStrategyFilename = "strategy_table.json";
+let cpuMultiJobId = null;
+let cpuMultiJobPollHandle = null;
 
 function setUploadStatus(elementId, message, tone = "muted") {
   const node = document.getElementById(elementId);
@@ -169,6 +173,94 @@ function downloadStrategyTable() {
   link.click();
   link.remove();
   URL.revokeObjectURL(url);
+}
+
+function setCpuMultiRunning(isRunning) {
+  document.getElementById("run-cpu-multi-btn").disabled = isRunning;
+  document.getElementById("add-cpu-slot-btn").disabled = isRunning;
+  document.getElementById("remove-cpu-slot-btn").disabled = isRunning;
+}
+
+function stopCpuMultiPolling() {
+  if (cpuMultiJobPollHandle) {
+    clearTimeout(cpuMultiJobPollHandle);
+    cpuMultiJobPollHandle = null;
+  }
+}
+
+function renderCpuMatchProgress(job = null) {
+  const label = document.getElementById("cpu-multi-progress-label");
+  const bar = document.getElementById("cpu-multi-progress-bar");
+  const status = document.getElementById("cpu-multi-progress-status");
+  const preview = document.getElementById("cpu-multi-progress-preview");
+
+  if (!job) {
+    label.textContent = "Idle";
+    bar.style.width = "0%";
+    status.textContent = "まだ自己対戦は実行していません。";
+    preview.innerHTML = "";
+    return;
+  }
+
+  label.textContent = job.status || "Running";
+  bar.style.width = `${Math.max(0, Math.min(100, job.percent || 0))}%`;
+  status.textContent = `${job.message || ""} ${job.completed_hands || 0} / ${job.total_hands || 0} hands`;
+  preview.innerHTML = (job.leaderboard_preview || [])
+    .map(
+      (player) => `
+        <div class="list-card">
+          <strong>${player.name}</strong>
+          <div>Profit ${player.profit}</div>
+          <div>Wins ${player.wins}</div>
+          <div>Avg / hand ${player.avg_profit}</div>
+        </div>
+      `
+    )
+    .join("");
+}
+
+function renderCpuReplaySnapshot(snapshot) {
+  const container = document.getElementById("cpu-multi-live-replay");
+  if (!snapshot) {
+    container.innerHTML = `<div class="panel-note">ライブ再生はここに表示されます。</div>`;
+    return;
+  }
+
+  const winners = (snapshot.last_winners || []).map((winner) => `${winner.name} +${winner.amount}`).join(" / ");
+  container.innerHTML = `
+    <div class="replay-card">
+      <div class="replay-header">
+        <strong>Live Replay: Hand #${snapshot.hand_id}</strong>
+        <span class="pill">${(snapshot.phase || "waiting").toUpperCase()}</span>
+      </div>
+      <div class="list-card">
+        <div>${snapshot.table_message}</div>
+        <div>Pot ${snapshot.pot}</div>
+        <div>Board</div>
+        <div class="cards-row">${renderCards(snapshot.community_cards || [])}</div>
+        ${winners ? `<div>Winners: ${winners}</div>` : ""}
+      </div>
+      <div class="replay-players">
+        ${(snapshot.players || [])
+          .map(
+            (player) => `
+              <div class="replay-player ${!player.in_hand ? "out" : ""}">
+                <div class="replay-player-main">
+                  <strong>${player.name}</strong>
+                  <div class="cards-row">${renderCards(player.hand || [])}</div>
+                </div>
+                <div class="replay-player-meta">
+                  <div>${player.last_action}</div>
+                  <div>Stack ${player.stack}</div>
+                  ${player.win_amount ? `<div>Won +${player.win_amount}</div>` : ""}
+                </div>
+              </div>
+            `
+          )
+          .join("")}
+      </div>
+    </div>
+  `;
 }
 
 function renderSeats(players) {
@@ -339,6 +431,7 @@ function renderCpuMatchResult(result) {
     document.getElementById("download-strategy-btn").disabled = true;
     lastStrategyTable = null;
     document.getElementById("cpu-match-result").innerHTML = `<div class="list-card">No self-play run yet.</div>`;
+    renderCpuReplaySnapshot(null);
     return;
   }
   document.getElementById("cpu-selfplay-summary").textContent =
@@ -346,6 +439,15 @@ function renderCpuMatchResult(result) {
   lastStrategyTable = result.strategy_table || null;
   lastStrategyFilename = result.strategy_table_filename || "strategy_table.json";
   document.getElementById("download-strategy-btn").disabled = !lastStrategyTable;
+  renderCpuReplaySnapshot(result.last_replay_snapshot || null);
+  renderCpuMatchProgress({
+    status: "completed",
+    completed_hands: result.hands,
+    total_hands: result.hands,
+    percent: 100,
+    message: "CPU self-play finished.",
+    leaderboard_preview: result.leaderboard || [],
+  });
   const leaderboard = (result.leaderboard || [])
     .map(
       (player) => `
@@ -461,7 +563,13 @@ function renderCpuMultiSlots() {
       (slot, index) => `
         <div class="cpu-config">
           <strong>CPU Slot ${index + 1}</strong>
-          <input id="cpu-multi-file-${slot.id}" type="file" accept=".py" />
+          <div class="cpu-config-row">
+            <input id="cpu-multi-file-${slot.id}" type="file" accept=".py" />
+            <div class="amount-controls">
+              <label for="cpu-multi-count-${slot.id}">Players</label>
+              <input id="cpu-multi-count-${slot.id}" type="number" min="1" max="9" step="1" value="${slot.count}" />
+            </div>
+          </div>
           <div id="cpu-multi-slot-status-${slot.id}" class="upload-status muted">${slot.label}</div>
         </div>
       `
@@ -475,6 +583,12 @@ function renderCpuMultiSlots() {
       slot.file = file || null;
       slot.label = file ? `Selected: ${file.name}` : "No file selected.";
       setUploadStatus(`cpu-multi-slot-status-${slot.id}`, slot.label, "muted");
+      updateCpuMultiSelectionSummary();
+    });
+    document.getElementById(`cpu-multi-count-${slot.id}`).addEventListener("input", (event) => {
+      const nextValue = Number(event.target.value);
+      slot.count = Math.max(1, Math.min(9, Number.isFinite(nextValue) ? Math.floor(nextValue) : 1));
+      event.target.value = slot.count;
       updateCpuMultiSelectionSummary();
     });
   });
@@ -491,11 +605,12 @@ function ensureCpuMultiSlotsRendered() {
 
 function updateCpuMultiSelectionSummary() {
   const selected = cpuMultiSlots.filter((slot) => slot.file);
+  const totalPlayers = selected.reduce((sum, slot) => sum + slot.count, 0);
   if (selected.length === 0) {
     cpuMultiSelectionStatus = "No files selected.";
     cpuMultiSelectionTone = "muted";
   } else {
-    cpuMultiSelectionStatus = `Selected ${selected.length} slots: ${selected.map((slot) => slot.file.name).join(", ")}`;
+    cpuMultiSelectionStatus = `Selected ${selected.length} strategies / ${totalPlayers} players: ${selected.map((slot) => `${slot.file.name} x${slot.count}`).join(", ")}`;
     cpuMultiSelectionTone = "muted";
   }
   setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
@@ -608,44 +723,120 @@ document.getElementById("reveal-folded-btn").addEventListener("click", async () 
   await refreshState();
 });
 
+async function pollCpuMultiJob(jobId) {
+  try {
+    const job = await apiFetch(`${cpuMultiJobBaseUrl}/${jobId}`);
+    renderCpuMatchProgress(job);
+    if (job.latest_snapshot) {
+      renderCpuReplaySnapshot(job.latest_snapshot);
+    }
+
+    if (job.status === "completed") {
+      setCpuMultiRunning(false);
+      setFreezeCpuPanels(false);
+      stopCpuMultiPolling();
+      cpuMultiJobId = null;
+      renderCpuMatchResult(job.result);
+      return;
+    }
+
+    if (job.status === "failed") {
+      setCpuMultiRunning(false);
+      setFreezeCpuPanels(false);
+      stopCpuMultiPolling();
+      cpuMultiJobId = null;
+      cpuMultiSelectionStatus = `Run failed: ${job.error || job.message}`;
+      cpuMultiSelectionTone = "error";
+      setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
+      alert(job.error || job.message || "CPU self-play failed.");
+      return;
+    }
+
+    cpuMultiJobPollHandle = setTimeout(() => pollCpuMultiJob(jobId), 1000);
+  } catch (error) {
+    setCpuMultiRunning(false);
+    setFreezeCpuPanels(false);
+    stopCpuMultiPolling();
+    cpuMultiJobId = null;
+    cpuMultiSelectionStatus = `Progress load failed: ${error.message}`;
+    cpuMultiSelectionTone = "error";
+    setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
+    alert(error.message);
+  }
+}
+
 document.getElementById("run-cpu-multi-btn").addEventListener("click", async () => {
-  if (requestInFlight) return;
+  if (requestInFlight || cpuMultiJobId) return;
   try {
     const slotsWithFiles = cpuMultiSlots.filter((slot) => slot.file);
-    if (slotsWithFiles.length < 2) {
-      throw new Error("Select at least two .py files.");
+    const totalPlayers = slotsWithFiles.reduce((sum, slot) => sum + slot.count, 0);
+    if (slotsWithFiles.length === 0) {
+      throw new Error("Select at least one .py file.");
     }
+    if (totalPlayers < 2) {
+      throw new Error("Set at least two total CPU players.");
+    }
+    if (totalPlayers > 9) {
+      throw new Error("CPU multiplayer supports at most 9 players.");
+    }
+
+    setCpuMultiRunning(true);
     setFreezeCpuPanels(true);
-    cpuMultiSelectionStatus = `Uploading ${slotsWithFiles.length} files...`;
+    stopCpuMultiPolling();
+    cpuMultiSelectionStatus = `Uploading ${slotsWithFiles.length} strategy files...`;
     cpuMultiSelectionTone = "muted";
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
-    document.getElementById("cpu-selfplay-summary").textContent = "自己対戦を実行中です。完了すると結果が表示されます。";
+    document.getElementById("cpu-selfplay-summary").textContent = "自己対戦を準備中です。アップロード後にバックグラウンド実行へ切り替わります。";
     document.getElementById("download-strategy-btn").disabled = true;
-    const uploaded = [];
+    lastStrategyTable = null;
+
+    const uploadedPaths = [];
     for (const slot of slotsWithFiles) {
-      uploaded.push(await uploadCpuFile(slot.file));
-      slot.label = `Uploaded: ${slot.file.name}`;
+      const uploaded = await uploadCpuFile(slot.file);
+      for (let index = 0; index < slot.count; index += 1) {
+        uploadedPaths.push(uploaded.uploaded_cpu_path);
+      }
+      slot.label = `Uploaded: ${slot.file.name} x${slot.count}`;
       setUploadStatus(`cpu-multi-slot-status-${slot.id}`, slot.label, "success");
     }
-    setFreezeCpuPanels(false);
-    cpuMultiSelectionStatus = `Uploaded ${slotsWithFiles.length} files: ${slotsWithFiles.map((slot) => slot.file.name).join(", ")}`;
+
+    cpuMultiSelectionStatus = `Uploaded ${slotsWithFiles.length} strategies for ${uploadedPaths.length} seats.`;
     cpuMultiSelectionTone = "success";
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
+
     const hands = Number(document.getElementById("cpu-multi-hands").value);
     const exportStrategyPath = document.getElementById("cpu-multi-export").value.trim();
-    const result = await apiFetch(cpuMultiMatchUrl, {
+    const liveReplay = hands <= 200;
+    renderCpuMatchProgress({
+      status: "running",
+      completed_hands: 0,
+      total_hands: hands,
+      percent: 0,
+      message: liveReplay
+        ? "CPU self-play is running. Live replay updates every few moments."
+        : "CPU self-play is running. Live replay is disabled for large runs to keep execution fast.",
+      leaderboard_preview: [],
+    });
+
+    const job = await apiFetch(cpuMultiStartUrl, {
       method: "POST",
       body: JSON.stringify({
-        cpu_paths: uploaded.map((item) => item.uploaded_cpu_path),
+        cpu_paths: uploadedPaths,
         hands,
         starting_stack: Number(document.getElementById("starting-stack").value),
         export_strategy_path: exportStrategyPath || null,
+        live_replay: liveReplay,
       }),
     });
-    renderCpuMatchResult(result);
+
+    cpuMultiJobId = job.job_id;
+    pollCpuMultiJob(job.job_id);
   } catch (error) {
+    setCpuMultiRunning(false);
     setFreezeCpuPanels(false);
-    cpuMultiSelectionStatus = `Upload failed: ${error.message}`;
+    stopCpuMultiPolling();
+    cpuMultiJobId = null;
+    cpuMultiSelectionStatus = `Run failed: ${error.message}`;
     cpuMultiSelectionTone = "error";
     setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
     alert(error.message);
@@ -655,10 +846,11 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
 document.getElementById("add-cpu-slot-btn").addEventListener("click", () => {
   setFreezeCpuPanels(true);
   const nextId = cpuMultiSlots.length ? Math.max(...cpuMultiSlots.map((slot) => slot.id)) + 1 : 1;
-  cpuMultiSlots.push({ id: nextId, file: null, label: "No file selected." });
+  cpuMultiSlots.push({ id: nextId, file: null, count: 1, label: "No file selected." });
   cpuMultiSlotsSignature = null;
   renderCpuMultiSlots();
   updateCpuMultiSelectionSummary();
+  setFreezeCpuPanels(false);
 });
 
 document.getElementById("remove-cpu-slot-btn").addEventListener("click", () => {
@@ -668,9 +860,13 @@ document.getElementById("remove-cpu-slot-btn").addEventListener("click", () => {
   cpuMultiSlotsSignature = null;
   renderCpuMultiSlots();
   updateCpuMultiSelectionSummary();
+  setFreezeCpuPanels(false);
 });
 
 document.getElementById("download-strategy-btn").addEventListener("click", downloadStrategyTable);
 
+renderCpuMatchProgress(null);
+renderCpuReplaySnapshot(null);
+setCpuMultiRunning(false);
 refreshState();
 setInterval(refreshState, 6000);

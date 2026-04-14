@@ -35,14 +35,14 @@ CPU_NAME_POOL = [
     "CPU NorthWest",
 ]
 CPU_TEMPLATE_POOL = [
-    "cfr_agent.py",
-    "random_agent.py",
-    "tight_agent.py",
-    "cfr_agent.py",
-    "random_agent.py",
-    "tight_agent.py",
-    "cfr_agent.py",
-    "tight_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
+    "table_builder_agent.py",
 ]
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from collections import defaultdict
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Callable, Dict, Optional
 
 from .engine import CPU_NAME_POOL, HoldemGame
 from .strategy_tables.lib import candidate_infosets, encode_infoset
@@ -127,6 +127,8 @@ def run_multiway_cpu_match(
     hands: int,
     starting_stack: int,
     export_strategy_path: Optional[str] = None,
+    progress_callback: Optional[Callable[[dict], None]] = None,
+    capture_replay: bool = False,
 ) -> dict:
     if not 2 <= len(cpu_paths) <= 9:
         raise ValueError("CPU paths must contain between 2 and 9 players.")
@@ -164,11 +166,23 @@ def run_multiway_cpu_match(
         "visited_infosets": 0,
         "phase_breakdown": {},
         "seat_stats": [],
+        "last_replay_snapshot": None,
     }
     action_counts: Dict[str, Dict[str, int]] = defaultdict(lambda: defaultdict(int))
     infoset_visits: Dict[str, int] = defaultdict(int)
     phase_visits: Dict[str, int] = defaultdict(int)
     initial_stack = starting_stack
+
+    if progress_callback:
+        progress_callback(
+            {
+                "completed_hands": 0,
+                "total_hands": hands,
+                "percent": 0.0,
+                "message": "CPU self-play is starting.",
+                "latest_snapshot": None,
+            }
+        )
 
     for _hand_index in range(hands):
         game.start_new_hand(autoplay_cpus=False)
@@ -230,6 +244,33 @@ def run_multiway_cpu_match(
                 player.stack = initial_stack
             game.awaiting_new_hand = True
 
+        latest_snapshot = None
+        if capture_replay:
+            latest_snapshot = build_replay_snapshot(game)
+            stats["last_replay_snapshot"] = latest_snapshot
+
+        should_report_progress = False
+        if progress_callback:
+            completed_hands = _hand_index + 1
+            update_interval = max(1, hands // 100)
+            should_report_progress = (
+                capture_replay
+                or completed_hands == 1
+                or completed_hands == hands
+                or completed_hands % update_interval == 0
+            )
+        if should_report_progress:
+            progress_callback(
+                {
+                    "completed_hands": completed_hands,
+                    "total_hands": hands,
+                    "percent": round((completed_hands / max(1, hands)) * 100, 1),
+                    "message": f"Simulated {completed_hands} / {hands} hands.",
+                    "latest_snapshot": latest_snapshot,
+                    "leaderboard_preview": build_leaderboard_preview(stats["players"], completed_hands),
+                }
+            )
+
     stats["visited_infosets"] = len(infoset_visits)
     stats["phase_breakdown"] = dict(sorted(phase_visits.items()))
     for player in stats["players"]:
@@ -265,16 +306,64 @@ def run_multiway_cpu_match(
         for player in sorted(stats["players"], key=lambda player: player["seat"])
     ]
 
+    strategy_table = to_probability_table(action_counts, infoset_visits)
+    stats["strategy_table"] = strategy_table
+    stats["strategy_table_filename"] = (
+        Path(export_strategy_path).expanduser().resolve().name
+        if export_strategy_path
+        else f"multiplayer_strategy_{len(resolved_paths)}p_{hands}hands.json"
+    )
+
     if export_strategy_path:
         export_path = Path(export_strategy_path).expanduser().resolve()
         export_path.parent.mkdir(parents=True, exist_ok=True)
         export_path.write_text(
-            json.dumps(to_probability_table(action_counts, infoset_visits), indent=2, ensure_ascii=False),
+            json.dumps(strategy_table, indent=2, ensure_ascii=False),
             encoding="utf-8",
         )
         stats["exported_strategy_path"] = str(export_path)
 
     return stats
+
+
+def build_leaderboard_preview(players: list[dict], completed_hands: int) -> list[dict]:
+    preview = []
+    for player in sorted(players, key=lambda entry: (entry["profit"], entry["wins"]), reverse=True)[:3]:
+        preview.append(
+            {
+                "name": player["name"],
+                "profit": player["profit"],
+                "wins": player["wins"],
+                "avg_profit": round(player["profit"] / max(1, completed_hands), 2),
+            }
+        )
+    return preview
+
+
+def build_replay_snapshot(game: HoldemGame) -> dict:
+    state = game.serialize_state(reveal_all_cards=True, reveal_folded=True)
+    return {
+        "hand_id": state["hand_id"],
+        "phase": state["phase"],
+        "pot": state["pot"],
+        "community_cards": state["community_cards"],
+        "table_message": state["table_message"],
+        "players": [
+            {
+                "seat": player["seat"],
+                "name": player["name"],
+                "stack": player["stack"],
+                "hand": player["hand"],
+                "last_action": player["last_action"],
+                "folded": player["folded"],
+                "in_hand": player["in_hand"],
+                "all_in": player["all_in"],
+                "win_amount": player["win_amount"],
+            }
+            for player in state["players"]
+        ],
+        "last_winners": state["last_winners"],
+    }
 
 
 def result_for_seat(winners: list[dict], seat: int) -> int:

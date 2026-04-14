@@ -111,10 +111,10 @@
         <div class="cpu-panel">
           <h2>CPU Multiplayer</h2>
           <p class="panel-note">
-            複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で席を追加すると、同じ `.py` ファイルも何度でも使えます。
+            複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で戦略枠を追加して、各枠ごとに「このCPUを何人入れるか」も決められます。
           </p>
           <div class="selfplay-note">
-            `Run Multiplayer Match` を押すと、指定したハンド数だけCPU同士で自動対戦し、順位表・最近の結果・戦略表生成結果を表示します。
+            `Run Multiplayer Match` を押すと、指定したハンド数だけCPU同士で自動対戦し、進捗・ライブ再生・順位表・戦略表生成結果を表示します。
           </div>
           <div class="button-row">
             <button id="add-cpu-slot-btn" class="ghost-btn">Add CPU Slot</button>
@@ -135,6 +135,17 @@
             <button id="run-cpu-multi-btn" class="primary-btn">Run Multiplayer Match</button>
           </div>
           <div id="cpu-multi-upload-status" class="upload-status muted">No files selected.</div>
+          <div class="selfplay-progress-card">
+            <div class="selfplay-progress-header">
+              <strong>Run Status</strong>
+              <span id="cpu-multi-progress-label" class="pill">Idle</span>
+            </div>
+            <div class="progress-track">
+              <div id="cpu-multi-progress-bar" class="progress-fill"></div>
+            </div>
+            <div id="cpu-multi-progress-status" class="panel-note">まだ自己対戦は実行していません。</div>
+            <div id="cpu-multi-progress-preview" class="history-list compact-list"></div>
+          </div>
         </div>
       </aside>
 
@@ -157,6 +168,9 @@
         <section class="stats-section">
           <h2>CPU Self-Play Result</h2>
           <div id="cpu-selfplay-summary" class="panel-note">結果はここに表示されます。</div>
+          <div id="cpu-multi-live-replay" class="hero-win-rate-card">
+            <div class="panel-note">ライブ再生はここに表示されます。</div>
+          </div>
           <div class="button-row">
             <button id="download-strategy-btn" class="ghost-btn" disabled>Download Strategy Table</button>
           </div>

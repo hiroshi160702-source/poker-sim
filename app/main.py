@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import re
+import threading
+import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,8 @@ EMBEDDED_CPU_DIR = BASE_DIR.parent / "embedded_cpus"
 
 app = FastAPI(title="Texas Hold'em Simulator", version="0.1.0")
 game = HoldemGame(LOGS_DIR, EMBEDDED_CPU_DIR)
+cpu_multi_jobs: dict[str, dict] = {}
+cpu_multi_jobs_lock = threading.Lock()
 
 
 class ActionRequest(BaseModel):
@@ -47,6 +51,7 @@ class CpuMultiMatchRequest(BaseModel):
     hands: int = 100
     starting_stack: int = 2000
     export_strategy_path: Optional[str] = None
+    live_replay: bool = True
 
 
 def sanitize_upload_name(filename: str) -> str:
@@ -163,9 +168,93 @@ async def run_cpu_multiplayer(request: CpuMultiMatchRequest) -> dict:
             hands=request.hands,
             starting_stack=request.starting_stack,
             export_strategy_path=request.export_strategy_path,
+            capture_replay=request.live_replay,
         )
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/start-cpu-multiplayer")
+async def start_cpu_multiplayer(request: CpuMultiMatchRequest) -> dict:
+    job_id = uuid.uuid4().hex
+    with cpu_multi_jobs_lock:
+        cpu_multi_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "completed_hands": 0,
+            "total_hands": request.hands,
+            "percent": 0.0,
+            "message": "Waiting to start.",
+            "latest_snapshot": None,
+            "leaderboard_preview": [],
+            "result": None,
+            "error": None,
+        }
+
+    def progress_callback(payload: dict) -> None:
+        with cpu_multi_jobs_lock:
+            job = cpu_multi_jobs.get(job_id)
+            if not job:
+                return
+            job["status"] = "running"
+            job["completed_hands"] = payload.get("completed_hands", job["completed_hands"])
+            job["total_hands"] = payload.get("total_hands", job["total_hands"])
+            job["percent"] = payload.get("percent", job["percent"])
+            job["message"] = payload.get("message", job["message"])
+            job["latest_snapshot"] = payload.get("latest_snapshot")
+            job["leaderboard_preview"] = payload.get("leaderboard_preview", job["leaderboard_preview"])
+
+    def worker() -> None:
+        try:
+            result = run_multiway_cpu_match(
+                logs_dir=LOGS_DIR,
+                embedded_cpu_dir=EMBEDDED_CPU_DIR,
+                cpu_paths=request.cpu_paths,
+                hands=request.hands,
+                starting_stack=request.starting_stack,
+                export_strategy_path=request.export_strategy_path,
+                progress_callback=progress_callback,
+                capture_replay=request.live_replay,
+            )
+            with cpu_multi_jobs_lock:
+                job = cpu_multi_jobs.get(job_id)
+                if not job:
+                    return
+                job["status"] = "completed"
+                job["percent"] = 100.0
+                job["completed_hands"] = request.hands
+                job["message"] = "CPU self-play finished."
+                job["latest_snapshot"] = result.get("last_replay_snapshot")
+                job["result"] = result
+        except Exception as exc:
+            with cpu_multi_jobs_lock:
+                job = cpu_multi_jobs.get(job_id)
+                if not job:
+                    return
+                job["status"] = "failed"
+                job["error"] = str(exc)
+                job["message"] = str(exc)
+
+    threading.Thread(target=worker, daemon=True).start()
+    with cpu_multi_jobs_lock:
+        job = cpu_multi_jobs[job_id]
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "completed_hands": job["completed_hands"],
+        "total_hands": job["total_hands"],
+        "percent": job["percent"],
+        "message": job["message"],
+    }
+
+
+@app.get("/api/cpu-multiplayer-jobs/{job_id}")
+async def get_cpu_multiplayer_job(job_id: str) -> dict:
+    with cpu_multi_jobs_lock:
+        job = cpu_multi_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return job
 
 
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
