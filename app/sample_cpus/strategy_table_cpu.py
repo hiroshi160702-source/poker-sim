@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""JSON の戦略表を参照して行動を選ぶ CPU です。"""
+
 import json
 import random
 from functools import lru_cache
@@ -10,7 +12,7 @@ from app.strategy_tables.lib import candidate_infosets, encode_infoset
 
 PACKAGE_ROOT = Path(app_package.__file__).resolve().parent
 DEFAULT_TABLE_CANDIDATES = [
-    Path(__file__).resolve().parent / "strategy_tables" / "example_gto.json",
+    Path(__file__).resolve().parent / "strategy_tables" / "multiplayer_strategy_6p_5000000hands.json",
     PACKAGE_ROOT / "sample_cpus" / "strategy_tables" / "multiway_3p_100000.json",
     PACKAGE_ROOT / "sample_cpus" / "strategy_tables" / "table_builder_expanded_200000.json",
     PACKAGE_ROOT / "sample_cpus" / "strategy_tables" / "example_gto.json",
@@ -18,6 +20,8 @@ DEFAULT_TABLE_CANDIDATES = [
 
 
 def decide_action(game_state, player_state, legal_actions):
+    # 戦略表は infoset をキーにしているため、対局中は参照して
+    # 確率的にアクションを選ぶだけで動きます。
     table = load_strategy_table()
     infoset = encode_infoset(game_state, player_state)
     strategy = lookup_strategy(table, infoset, legal_actions)
@@ -32,10 +36,15 @@ def load_strategy_table(table_path: str | None = None):
 
 
 def resolve_table_path(table_path: str | None) -> Path:
+    # アップロード CPU は app/sample_cpus の外で動くことがあるため、
+    # ローカル配置先とパッケージ内の両方を探索します。
     if table_path:
         path = Path(table_path).resolve()
         if path.exists():
             return path
+    sibling_jsons = sorted(Path(__file__).resolve().parent.glob("*.json"))
+    if sibling_jsons:
+        return sibling_jsons[0].resolve()
     for candidate in DEFAULT_TABLE_CANDIDATES:
         if candidate.exists():
             return candidate.resolve()
@@ -43,6 +52,8 @@ def resolve_table_path(table_path: str | None) -> Path:
 
 
 def lookup_strategy(table, infoset, legal_actions):
+    # 厳密な infoset から広い "any" バケットへ順に探し、現在局面に合う
+    # 合法アクション分布を見つけます。
     legal_types = {action["type"] for action in legal_actions}
 
     for key in candidate_infosets(infoset):
@@ -100,12 +111,14 @@ def materialize_action(action_type, legal_actions, infoset):
 
 
 def choose_size(action, infoset):
+    # 戦略表には行動確率しかないため、ベットサイズは同じ infoset を使って
+    # ヒューリスティックに決めています。
     min_total = action["min_total"]
     max_total = action["max_total"]
     if max_total <= min_total:
         return max_total
 
-    phase, _position, bucket, pressure, stack_bucket, _texture = infoset.split("|")
+    phase, _player_count, _position, bucket, pressure, stack_bucket, _texture = infoset.split("|")
     span = max_total - min_total
     if phase == "preflop":
         if bucket in {"premium", "strong"}:

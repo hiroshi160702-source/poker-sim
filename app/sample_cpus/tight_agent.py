@@ -3,6 +3,8 @@ VALUES = {rank: index for index, rank in enumerate(RANKS, start=2)}
 
 
 def decide_action(game_state, player_state, legal_actions):
+    # 分かりやすくタイトな戦略です。強い手だけ続行し、微妙な手では
+    # 無理に攻めず受け身に寄せます。
     card_a, card_b = player_state["actual_hand"]
     suited = card_a[1] == card_b[1]
     high = sorted([VALUES[card_a[0]], VALUES[card_b[0]]], reverse=True)

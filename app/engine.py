@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""テキサスホールデムの進行、役判定、状態出力をまとめた中核エンジンです。"""
+
 import itertools
 import json
 import random
@@ -35,19 +37,15 @@ CPU_NAME_POOL = [
     "CPU NorthWest",
 ]
 CPU_TEMPLATE_POOL = [
-    "table_builder_agent.py",
-    "table_builder_agent.py",
-    "table_builder_agent.py",
-    "table_builder_agent.py",
-    "table_builder_agent.py",
-    "table_builder_agent.py",
-    "table_builder_agent.py",
-    "table_builder_agent.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
+    "strategy_table_cpu.py",
 ]
-
-
-def now_label() -> str:
-    return datetime.now().strftime("%H:%M:%S")
 
 
 def make_deck() -> List[str]:
@@ -71,6 +69,7 @@ def describe_action(action_type: str, amount: int = 0) -> str:
 
 
 def evaluate_five(cards: Sequence[str]) -> Tuple[int, List[int]]:
+    # 役カテゴリとキッカー列を返し、そのまま比較可能な形にしています。
     ranks = sorted((card_rank(card) for card in cards), reverse=True)
     rank_counts: Dict[int, int] = {}
     suits = [card[1] for card in cards]
@@ -127,6 +126,7 @@ def evaluate_five(cards: Sequence[str]) -> Tuple[int, List[int]]:
 
 
 def best_hand(cards: Sequence[str]) -> Tuple[Tuple[int, List[int]], str]:
+    # ホールデムでは 7 枚から最善の 5 枚を選んで役比較します。
     best_rank: Optional[Tuple[int, List[int]]] = None
     for combo in itertools.combinations(cards, 5):
         rank = evaluate_five(combo)
@@ -157,6 +157,7 @@ class PlayerState:
     cpu_error: Optional[str] = None
 
     def reset_for_hand(self) -> None:
+        # ハンドごとに変わる状態だけを消し、席情報などは保持します。
         self.hand = []
         self.in_hand = self.stack > 0
         self.folded = False
@@ -219,6 +220,7 @@ class HoldemGame:
         self.log_lines: List[str] = []
         self.history: List[dict] = []
         self.last_winners: List[dict] = []
+        self.tournament_over = False
         self.small_blind_seat: Optional[int] = None
         self.big_blind_seat: Optional[int] = None
         self.table_message = "New table ready."
@@ -228,6 +230,8 @@ class HoldemGame:
         self.autoplay_cpus_enabled = True
 
     def _build_default_players(self) -> List[PlayerState]:
+        # 0 番席は人間用です。それ以外は最初から同梱 CPU を割り当てて、
+        # 初期状態でもすぐ遊べるようにしています。
         sample_dir = (Path(__file__).resolve().parent / "sample_cpus").resolve()
         players = [PlayerState(seat=0, name="You", stack=self.starting_stack, is_human=True)]
         for index in range(self.cpu_count):
@@ -270,6 +274,7 @@ class HoldemGame:
         self.log_lines = []
         self.history = []
         self.last_winners = []
+        self.tournament_over = False
         self.small_blind_seat = None
         self.big_blind_seat = None
         self.table_message = "Table reset."
@@ -278,8 +283,19 @@ class HoldemGame:
         self.autoplay_cpus_enabled = True
 
     def add_log(self, message: str) -> None:
-        self.log_lines.append(f"[{now_label()}] {message}")
+        self.log_lines.append(message)
         self.log_lines = self.log_lines[-120:]
+
+    def phase_label(self) -> str:
+        labels = {
+            "waiting": "WAITING",
+            "preflop": "PREFLOP",
+            "flop": "FLOP",
+            "turn": "TURN",
+            "river": "RIVER",
+            "showdown": "SHOWDOWN",
+        }
+        return labels.get(self.phase, self.phase.upper())
 
     def eligible_seats(self) -> List[int]:
         return [player.seat for player in self.players if player.stack > 0]
@@ -297,6 +313,57 @@ class HoldemGame:
                 return seat
         return None
 
+    def previous_occupied_seat(self, start_seat: int) -> Optional[int]:
+        total = len(self.players)
+        for offset in range(1, total + 1):
+            seat = (start_seat - offset) % total
+            if self.players[seat].stack > 0:
+                return seat
+        return None
+
+    def determine_button_and_blinds(self, eligible: List[int]) -> Tuple[int, int, int]:
+        # BB を誰が払うかを最優先で進めると、「次に自分へ BB が来るはずなのに
+        # 飛ばされた」という不自然さが起きにくくなります。
+        if self.big_blind_seat is None:
+            dealer_start = self.dealer_index if self.dealer_index >= 0 else eligible[-1]
+            dealer_seat = self.next_occupied_seat(dealer_start)
+            if dealer_seat is None:
+                dealer_seat = eligible[0]
+            if len(eligible) == 2:
+                small_blind_seat = dealer_seat
+                big_blind_seat = next(seat for seat in eligible if seat != dealer_seat)
+                return dealer_seat, small_blind_seat, big_blind_seat
+
+            small_blind_seat = self.next_occupied_seat(dealer_seat)
+            if small_blind_seat is None:
+                small_blind_seat = dealer_seat
+            big_blind_seat = self.next_occupied_seat(small_blind_seat)
+            if big_blind_seat is None:
+                big_blind_seat = small_blind_seat
+            return dealer_seat, small_blind_seat, big_blind_seat
+
+        big_blind_seat = self.next_occupied_seat(self.big_blind_seat)
+        if big_blind_seat is None:
+            big_blind_seat = eligible[0]
+        if len(eligible) == 2:
+            dealer_seat = next(seat for seat in eligible if seat != big_blind_seat)
+            small_blind_seat = dealer_seat
+            return dealer_seat, small_blind_seat, big_blind_seat
+
+        small_blind_seat = self.previous_occupied_seat(big_blind_seat)
+        if small_blind_seat is None:
+            small_blind_seat = big_blind_seat
+        dealer_seat = self.previous_occupied_seat(small_blind_seat)
+        if dealer_seat is None:
+            dealer_seat = small_blind_seat
+        return dealer_seat, small_blind_seat, big_blind_seat
+
+    def deal_order_start_seat(self, eligible: List[int]) -> int:
+        # 通常人数ではディーラー左から配り、ヘッズアップではディーラー(SB)から配ります。
+        if len(eligible) == 2:
+            return self.dealer_index
+        return self.dealer_index + 1
+
     def next_eligible_actor(self, start_seat: int) -> Optional[int]:
         for seat in self.seats_in_order_from(start_seat + 1):
             player = self.players[seat]
@@ -305,6 +372,11 @@ class HoldemGame:
         return None
 
     def start_new_hand(self, autoplay_cpus: bool = True) -> None:
+        # ハンド開始時に卓状態を初期化し、ディーラー移動、配札、ブラインド徴収、
+        # そして必要なら人間の番まで CPU を自動進行させます。
+        if self.tournament_over:
+            self.reset_for_new_game()
+
         eligible = self.eligible_seats()
         if len(eligible) < 2:
             self.table_message = "At least two players with chips are required."
@@ -327,24 +399,18 @@ class HoldemGame:
         self.table_message = f"Hand #{self.hand_id} started."
         self._win_rate_dirty = True
 
-        dealer_start = self.dealer_index if self.dealer_index >= 0 else eligible[-1]
-        self.dealer_index = self.next_occupied_seat(dealer_start) or eligible[0]
+        self.dealer_index, small_blind_seat, big_blind_seat = self.determine_button_and_blinds(eligible)
 
         for player in self.players:
             player.reset_for_hand()
 
+        deal_start = self.deal_order_start_seat(eligible)
         for _ in range(2):
-            for seat in self.seats_in_order_from(self.dealer_index + 1):
+            for seat in self.seats_in_order_from(deal_start):
                 player = self.players[seat]
                 if player.stack > 0:
                     player.hand.append(self.deck.pop())
 
-        if len(eligible) == 2:
-            small_blind_seat = self.dealer_index
-            big_blind_seat = self.next_occupied_seat(self.dealer_index) or self.dealer_index
-        else:
-            small_blind_seat = self.next_occupied_seat(self.dealer_index) or self.dealer_index
-            big_blind_seat = self.next_occupied_seat(small_blind_seat) or small_blind_seat
         self.small_blind_seat = small_blind_seat
         self.big_blind_seat = big_blind_seat
 
@@ -361,8 +427,8 @@ class HoldemGame:
         }
         self.current_turn = self.next_eligible_actor(big_blind_seat)
         self.add_log(
-            f"Hand #{self.hand_id} begins. Dealer: {self.players[self.dealer_index].name}, "
-            f"SB: {self.players[small_blind_seat].name}, BB: {self.players[big_blind_seat].name}."
+            f"PREFLOP | Table | Hand #{self.hand_id} start / Dealer {self.players[self.dealer_index].name} / "
+            f"SB {self.players[small_blind_seat].name} / BB {self.players[big_blind_seat].name}"
         )
         if autoplay_cpus:
             self.auto_play_until_human()
@@ -376,8 +442,11 @@ class HoldemGame:
         player.all_in = player.stack == 0
         player.last_action = f"{label.title()} {posted}"
         self.pot += posted
+        self.add_log(f"PREFLOP | {player.name} | {player.last_action}")
 
     def legal_actions_for(self, seat: int) -> List[dict]:
+        # ブラウザ UI とアップロード CPU の両方がこの定義を使うため、
+        # 行動可否と金額制約はここで一元管理します。
         player = self.players[seat]
         if self.awaiting_new_hand or self.phase == "showdown":
             return []
@@ -434,6 +503,8 @@ class HoldemGame:
         return actions
 
     def apply_player_action(self, seat: int, action_type: str, amount: Optional[int] = None) -> None:
+        # 人間も CPU も全行動をここへ通し、チップ計算、ログ、手番遷移、
+        # ストリート進行を一貫させます。
         if seat != self.current_turn:
             raise ValueError("Not this player's turn.")
 
@@ -497,7 +568,7 @@ class HoldemGame:
         if player.stack == 0:
             player.all_in = True
 
-        self.add_log(f"{player.name}: {player.last_action}")
+        self.add_log(f"{self.phase_label()} | {player.name} | {player.last_action}")
         self._win_rate_dirty = True
 
         if reset_pending:
@@ -533,6 +604,7 @@ class HoldemGame:
         self.pot += committed
 
     def resolve_after_action(self, seat: int) -> None:
+        # 各アクション後に、ハンド終了・次ストリート移行・次手番のどれかへ進めます。
         active = self.active_players()
         if len(active) == 1:
             self.finish_without_showdown(active[0])
@@ -550,6 +622,7 @@ class HoldemGame:
         self.current_turn = next_turn
 
     def advance_phase_or_showdown(self) -> None:
+        # 標準的な進行順は preflop -> flop -> turn -> river -> showdown です。
         active = self.active_players()
         if len(active) <= 1:
             self.finish_without_showdown(active[0])
@@ -578,10 +651,9 @@ class HoldemGame:
         self.pending_to_act = {
             player.seat for player in active if not player.all_in and not player.folded
         }
-        self.current_turn = self.next_eligible_actor(self.dealer_index) or next(
-            iter(self.pending_to_act)
-        )
-        self.add_log(f"{self.phase.title()} dealt: {' '.join(self.community_cards)}")
+        next_turn = self.next_eligible_actor(self.dealer_index)
+        self.current_turn = next_turn if next_turn is not None else next(iter(self.pending_to_act))
+        self.add_log(f"{self.phase_label()} | Board | {' '.join(self.community_cards)}")
         if self.autoplay_cpus_enabled:
             self.auto_play_until_human()
 
@@ -594,7 +666,7 @@ class HoldemGame:
             elif len(self.community_cards) == 4:
                 self.phase = "river"
             self.deal_board_cards()
-        self.add_log(f"Runout board: {' '.join(self.community_cards)}")
+        self.add_log(f"SHOWDOWN | Board | {' '.join(self.community_cards)}")
 
     def deal_board_cards(self) -> None:
         if self.phase == "flop":
@@ -608,7 +680,7 @@ class HoldemGame:
         winner.win_amount = self.pot
         self.last_winners = [{"seat": winner.seat, "name": winner.name, "amount": self.pot}]
         self.table_message = f"{winner.name} wins {self.pot} chips by everyone folding."
-        self.add_log(self.table_message)
+        self.add_log(f"SHOWDOWN | Result | {self.table_message}")
         self.history.insert(
             0,
             {
@@ -620,6 +692,7 @@ class HoldemGame:
             },
         )
         self.history = self.history[:20]
+        self.update_tournament_state()
         self.persist_hand_log()
         self.phase = "showdown"
         self.current_turn = None
@@ -627,6 +700,7 @@ class HoldemGame:
         self._win_rate_dirty = True
 
     def showdown(self) -> None:
+        # 生き残った手を一度だけ評価し、メインポットとサイドポットを配分します。
         rankings: Dict[int, Tuple[Tuple[int, List[int]], str]] = {}
         for player in self.active_players():
             rank, label = best_hand(player.hand + self.community_cards)
@@ -647,8 +721,8 @@ class HoldemGame:
             f"{self.players[seat].name}: {rankings[seat][1]}" for seat in rankings
         )
         self.table_message = f"Showdown complete. {summary}."
-        self.add_log(self.table_message)
-        self.add_log(f"Hands: {detail}")
+        self.add_log(f"SHOWDOWN | Result | {self.table_message}")
+        self.add_log(f"SHOWDOWN | Hands | {detail}")
         self.history.insert(
             0,
             {
@@ -661,6 +735,7 @@ class HoldemGame:
             },
         )
         self.history = self.history[:20]
+        self.update_tournament_state()
         self.persist_hand_log()
         self.phase = "showdown"
         self.current_turn = None
@@ -668,6 +743,8 @@ class HoldemGame:
         self._win_rate_dirty = True
 
     def compute_side_pots(self, rankings: Dict[int, Tuple[Tuple[int, List[int]], str]]) -> Dict[int, int]:
+        # サイドポットは総投入額から組み立て、複数回のベットラウンドを跨ぐ
+        # オールインでも正しく精算できるようにします。
         contributions = {player.seat: player.total_bet for player in self.players if player.total_bet > 0}
         levels = sorted(set(contributions.values()))
         payouts: Dict[int, int] = {}
@@ -696,6 +773,7 @@ class HoldemGame:
         return payouts
 
     def auto_play_until_human(self) -> None:
+        # ライブ卓では、人間の番になるかハンド終了になるまで CPU を進めます。
         safety = 0
         while (
             not self.awaiting_new_hand
@@ -711,7 +789,7 @@ class HoldemGame:
                 decision = self.cpu_decision_for(player, legal_actions)
             except CpuAgentError as exc:
                 player.cpu_error = str(exc)
-                self.add_log(f"{player.name} CPU error: {exc}. Falling back to check/fold.")
+                self.add_log(f"{self.phase_label()} | {player.name} | CPU error / fallback to check-fold")
                 decision = self.fallback_decision(legal_actions)
 
             action_type = decision.get("type", "")
@@ -720,9 +798,7 @@ class HoldemGame:
                 self.apply_player_action(seat, action_type, amount)
             except Exception:
                 fallback = self.fallback_decision(legal_actions)
-                self.add_log(
-                    f"{player.name} returned invalid action. Fallback: {fallback['type']}."
-                )
+                self.add_log(f"{self.phase_label()} | {player.name} | Invalid action / fallback {fallback['type']}")
                 self.apply_player_action(seat, fallback["type"], fallback.get("amount"))
 
     def cpu_decision_for(self, player: PlayerState, legal_actions: List[dict]) -> dict:
@@ -756,7 +832,7 @@ class HoldemGame:
         self.cpu_loader.load(resolved)
         player.cpu_path = resolved
         player.cpu_error = None
-        self.add_log(f"{player.name} CPU loaded: {resolved}")
+        self.add_log(f"WAITING | {player.name} | CPU loaded")
         self.auto_play_until_human()
 
     def save_embedded_cpu(self, seat: int, code: str) -> str:
@@ -769,7 +845,7 @@ class HoldemGame:
         target = self.embedded_cpu_dir / f"seat_{seat}_{player.name.lower().replace(' ', '_')}.py"
         target.write_text(code, encoding="utf-8")
         self.load_cpu(seat, str(target))
-        self.add_log(f"{player.name} CPU script saved: {target}")
+        self.add_log(f"WAITING | {player.name} | CPU script saved")
         return str(target)
 
     def serialize_for_cpu(self) -> dict:
@@ -826,7 +902,10 @@ class HoldemGame:
         return self._cached_human_win_rate
 
     def serialize_state(self, reveal_all_cards: bool = False, reveal_folded: bool = False) -> dict:
+        # 1 つのシリアライザを UI・CPU・リプレイ表示で共用しています。
         human_win_rate = self.human_win_rate()
+        eligible = [player for player in self.players if player.stack > 0]
+        champion_name = eligible[0].name if len(eligible) == 1 and self.awaiting_new_hand else None
         return {
             "hand_id": self.hand_id,
             "phase": self.phase,
@@ -865,7 +944,46 @@ class HoldemGame:
             "logs": self.log_lines[-40:],
             "history": self.history[:12],
             "last_winners": self.last_winners,
+            "tournament_over": self.tournament_over,
+            "champion_name": champion_name,
         }
+
+    def update_tournament_state(self) -> None:
+        eligible = [player for player in self.players if player.stack > 0]
+        if len(eligible) == 1:
+            champion = eligible[0]
+            self.tournament_over = True
+            self.table_message = f"Game finished. Champion: {champion.name}."
+            self.add_log(f"SHOWDOWN | Tournament | Champion {champion.name}")
+
+    def reset_for_new_game(self) -> None:
+        # 卓設定や読み込んだ CPU は維持したまま、スタックと大会進行だけを
+        # 初期化して次のゲームへ入り直します。
+        self.hand_id = 0
+        self.dealer_index = -1
+        self.community_cards = []
+        self.deck = []
+        self.phase = "waiting"
+        self.current_turn = None
+        self.current_bet = 0
+        self.last_raise_size = self.big_blind
+        self.min_raise_to = self.big_blind
+        self.pot = 0
+        self.pending_to_act = set()
+        self.history = []
+        self.last_winners = []
+        self.small_blind_seat = None
+        self.big_blind_seat = None
+        self.awaiting_new_hand = True
+        self.tournament_over = False
+        self._cached_human_win_rate = 0.0
+        self._win_rate_dirty = True
+        self.autoplay_cpus_enabled = True
+        self.log_lines = []
+        for player in self.players:
+            player.stack = self.starting_stack
+            player.reset_for_hand()
+        self.table_message = "New game ready."
 
     def persist_hand_log(self) -> None:
         payload = {

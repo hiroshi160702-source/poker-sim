@@ -1,5 +1,7 @@
 import random
 
+# 本格的な CFR ソルバーではなく、現在局面を粗く抽象化して
+# regret matching 風に行動を混ぜる軽量サンプルです。
 RANKS = "23456789TJQKA"
 VALUES = {rank: index for index, rank in enumerate(RANKS, start=2)}
 
@@ -59,6 +61,8 @@ REGRET_TABLE = {
 
 
 def decide_action(game_state, player_state, legal_actions):
+    # 現在状態を小さな infoset に落とし込み、そのバケットに対応する
+    # regret テーブルから行動をサンプルします。
     infoset = build_infoset(game_state, player_state)
     regrets = lookup_regrets(infoset)
     strategy = regret_matching(regrets, legal_actions)
@@ -77,6 +81,8 @@ def build_infoset(game_state, player_state):
 
 
 def lookup_regrets(infoset):
+    # 厳密一致からより広い既定値へフォールバックし、手で調整していない
+    # 局面でも最低限は行動できるようにします。
     phase, bucket, position, pressure = infoset
     for key in (
         (phase, bucket, position, pressure),
@@ -131,6 +137,8 @@ def format_action(action_type, legal_actions):
             continue
         payload = {"type": action_type}
         if action_type in {"bet", "raise"}:
+            # 同じアクション種別でも小さめ〜中くらいのサイズを混ぜて、
+            # 完全固定の動きにならないようにします。
             min_total = action["min_total"]
             max_total = action["max_total"]
             if max_total <= min_total:

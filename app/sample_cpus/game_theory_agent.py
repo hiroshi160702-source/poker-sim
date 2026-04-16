@@ -1,5 +1,7 @@
 import random
 
+# これは理論寄りの近似 CPU です。pot odds、MDF 風の防衛、ブラフ頻度、
+# サイズの混合などを、厳密求解なしでヒューリスティックに近似しています。
 RANKS = "23456789TJQKA"
 VALUES = {rank: index for index, rank in enumerate(RANKS, start=2)}
 
@@ -15,7 +17,7 @@ def decide_action(game_state, player_state, legal_actions):
     mdf = pot / (pot + max(to_call, 1)) if to_call > 0 else 1.0
     aggression = raise_pressure(game_state, player_state)
 
-    # Bluff / value frequencies derived from hand strength and pressure.
+    # ブラフ頻度とバリュー頻度は、手の強さと現在の圧力から決めます。
     value_threshold = 0.72 - aggression * 0.06
     thin_value_threshold = 0.58 - aggression * 0.04
     bluff_threshold = 0.30 - aggression * 0.03
@@ -25,6 +27,8 @@ def decide_action(game_state, player_state, legal_actions):
         strength = min(0.99, strength + draw_bonus)
 
     if to_call > 0:
+        # ベットに直面しているときは、まず pot odds と比較してから、
+        # raise / call / fold のどの領域に入るかを決めます。
         if strength + 0.03 >= pot_odds:
             raise_action = first_action(legal_actions, {"raise"})
             call_action = first_action(legal_actions, {"call"})
@@ -39,7 +43,7 @@ def decide_action(game_state, player_state, legal_actions):
             if all_in_action and strength >= 0.84:
                 return {"type": "all-in", "amount": all_in_action["amount"]}
 
-        # Minimum defense frequency style fallback: sometimes continue with top of range.
+        # MDF 風の補助として、レンジ上位ハンドは一定頻度で防衛します。
         if random.random() < mdf and strength >= pot_odds * 0.82:
             call_action = first_action(legal_actions, {"call"})
             if call_action:
@@ -93,7 +97,7 @@ def sized_raise(action, strength, pot, stack):
     max_total = action["max_total"]
     target = min_total
 
-    # Use a few sizings instead of one fixed size to create a mixed strategy.
+    # サイズを 1 種類に固定せず、いくつか混ぜて戦略を単調にしません。
     if strength >= 0.82:
         target = min_total + int((max_total - min_total) * 0.7)
     elif strength >= 0.65:
@@ -101,7 +105,7 @@ def sized_raise(action, strength, pot, stack):
     elif strength >= 0.35:
         target = min_total + int((max_total - min_total) * 0.2)
 
-    # Prevent absurdly large thin bets when stack is deep.
+    # ディープ時に薄いバリューで極端に大きく張りすぎないように制限します。
     cap = min(max_total, min_total + pot + int(stack * 0.35))
     target = max(min_total, min(target, cap))
     return {"type": action["type"], "amount": target}

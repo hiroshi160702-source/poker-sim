@@ -4,6 +4,8 @@ from app.strategy_tables.lib import classify_postflop, classify_preflop
 
 
 def decide_action(game_state, player_state, legal_actions):
+    # 自己対戦でポストフロップ到達率を上げるため、わざと少しルーズで
+    # 行動の幅が広い戦略にしています。
     phase = game_state["phase"]
     if phase == "preflop":
         bucket = classify_preflop(player_state["actual_hand"])
@@ -39,6 +41,8 @@ def choose_postflop(bucket, legal_actions):
 
 
 def weighted_choice(legal_actions, preferred_weights, prefer_passive):
+    # どの合法アクションにも最低限の重みを残し、自己対戦が少数の行動だけに
+    # 偏ってしまわないようにします。
     weighted = []
     for action in legal_actions:
         action_type = action["type"]

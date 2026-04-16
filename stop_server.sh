@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -eu
 
+# start_server.sh で起動したデタッチ済みローカルサーバーを停止します。
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 PID_FILE="$SCRIPT_DIR/.poker-sim.pid"
 

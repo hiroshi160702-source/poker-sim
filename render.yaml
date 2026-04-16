@@ -1,5 +1,6 @@
 services:
   - type: web
+    # Render は Dockerfile をそのまま使って追加設定なしでデプロイできます。
     name: poker-sim
     env: docker
     plan: free

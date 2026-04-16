@@ -1,3 +1,4 @@
+// ポーカーテーブル UI と CPU 自己対戦ダッシュボード全体を制御します。
 const stateUrl = "/api/state";
 const newHandUrl = "/api/new-hand";
 const actionUrl = "/api/action";
@@ -18,8 +19,8 @@ const uploadStatusBySeat = {};
 let cpuMultiSelectionStatus = "No files selected.";
 let cpuMultiSelectionTone = "muted";
 let cpuMultiSlots = [
-  { id: 1, file: null, count: 1, label: "No file selected." },
-  { id: 2, file: null, count: 1, label: "No file selected." },
+  { id: 1, file: null, strategyFile: null, count: 1, label: "No file selected." },
+  { id: 2, file: null, strategyFile: null, count: 1, label: "No file selected." },
 ];
 let freezeCpuPanels = false;
 let cpuConfigSignature = null;
@@ -39,8 +40,11 @@ function setUploadStatus(elementId, message, tone = "muted") {
 function hasPendingFileSelection() {
   const perSeatFiles = Array.from(document.querySelectorAll('input[id^="cpu-file-"]'))
     .some((input) => input.files && input.files.length > 0);
+  const perSeatJsonFiles = Array.from(document.querySelectorAll('input[id^="cpu-json-"]'))
+    .some((input) => input.files && input.files.length > 0);
   return perSeatFiles
-    || cpuMultiSlots.some((slot) => Boolean(slot.file));
+    || perSeatJsonFiles
+    || cpuMultiSlots.some((slot) => Boolean(slot.file) || Boolean(slot.strategyFile));
 }
 
 function setFreezeCpuPanels(value) {
@@ -48,6 +52,8 @@ function setFreezeCpuPanels(value) {
 }
 
 async function apiFetch(url, options = {}) {
+  // UI からの主要な API 呼び出しはここを通し、リクエスト競合とエラー表示を
+  // できるだけ一貫させます。
   requestInFlight = true;
   try {
     const response = await fetch(url, {
@@ -66,8 +72,16 @@ async function apiFetch(url, options = {}) {
 }
 
 async function uploadCpuFile(file, seat = null) {
+  let strategyFile = null;
+  if (typeof seat === "object" && seat !== null) {
+    strategyFile = seat.strategyFile || null;
+    seat = seat.seat ?? null;
+  }
   const formData = new FormData();
   formData.append("file", file);
+  if (strategyFile) {
+    formData.append("strategy_file", strategyFile);
+  }
   if (seat !== null && seat !== undefined) {
     formData.append("seat", String(seat));
   }
@@ -204,7 +218,10 @@ function renderCpuMatchProgress(job = null) {
 
   label.textContent = job.status || "Running";
   bar.style.width = `${Math.max(0, Math.min(100, job.percent || 0))}%`;
-  status.textContent = `${job.message || ""} ${job.completed_hands || 0} / ${job.total_hands || 0} hands`;
+  const elapsed = formatDuration(job.elapsed_seconds);
+  const remaining = formatDuration(job.estimated_remaining_seconds);
+  const replayNote = job.capture_replay === false ? " Live replay disabled for large runs." : "";
+  status.textContent = `${job.message || ""} ${job.completed_hands || 0} / ${job.total_hands || 0} hands | Elapsed ${elapsed}${remaining ? ` | ETA ${remaining}` : ""}.${replayNote}`;
   preview.innerHTML = (job.leaderboard_preview || [])
     .map(
       (player) => `
@@ -220,6 +237,8 @@ function renderCpuMatchProgress(job = null) {
 }
 
 function renderCpuReplaySnapshot(snapshot) {
+  // ライブ再生は最新スナップショットだけを表示し、長い自己対戦でも
+  // ブラウザ側が重くなりすぎないようにします。
   const container = document.getElementById("cpu-multi-live-replay");
   if (!snapshot) {
     container.innerHTML = `<div class="panel-note">ライブ再生はここに表示されます。</div>`;
@@ -263,7 +282,25 @@ function renderCpuReplaySnapshot(snapshot) {
   `;
 }
 
+function formatDuration(seconds) {
+  if (seconds === null || seconds === undefined || !Number.isFinite(seconds)) {
+    return "";
+  }
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const secs = totalSeconds % 60;
+  if (hours > 0) {
+    return `${hours}h ${minutes}m ${secs}s`;
+  }
+  if (minutes > 0) {
+    return `${minutes}m ${secs}s`;
+  }
+  return `${secs}s`;
+}
+
 function renderSeats(players) {
+  // 座席は楕円上に動的配置し、少人数卓から 9 人卓まで同じ描画処理で扱います。
   const totalPlayers = players.length;
   seatIds.forEach((seatId) => {
     const node = document.getElementById(`seat-${seatId}`);
@@ -320,6 +357,8 @@ function renderCommunity(cards) {
 }
 
 function renderActionButtons(state) {
+  // 合法アクションの判定はサーバー側で行い、ブラウザ側は表示と
+  // 金額の範囲補正だけを担当します。
   const container = document.getElementById("action-buttons");
   const indicator = document.getElementById("turn-indicator");
   const amountInput = document.getElementById("bet-amount");
@@ -392,10 +431,27 @@ function renderActionButtons(state) {
 }
 
 function renderLogs(logs) {
+  const toCard = (line) => {
+    const parts = line.split(" | ");
+    if (parts.length >= 3) {
+      const [street, actor, ...rest] = parts;
+      return `
+        <div class="list-card log-card">
+          <div class="log-card-header">
+            <span class="pill">${street}</span>
+            <strong>${actor}</strong>
+          </div>
+          <div>${rest.join(" | ")}</div>
+        </div>
+      `;
+    }
+    return `<div class="list-card log-card">${line}</div>`;
+  };
+
   document.getElementById("log-list").innerHTML = logs
     .slice()
     .reverse()
-    .map((line) => `<div class="list-card">${line}</div>`)
+    .map(toCard)
     .join("");
 }
 
@@ -502,13 +558,19 @@ function renderCpuMatchResult(result) {
 }
 
 function renderCpuConfig(players) {
+  // こちらはライブ卓に対する席ごとの CPU 差し替え用アップロードです。
   const cpuPlayers = players.filter((player) => !player.is_human);
   document.getElementById("cpu-config-list").innerHTML = cpuPlayers
     .map(
       (player) => `
         <div class="cpu-config">
           <strong>${player.name}</strong>
-          <input id="cpu-file-${player.seat}" type="file" accept=".py" />
+          <div class="cpu-upload-fields">
+            <label class="upload-field-label" for="cpu-file-${player.seat}">CPU Script (.py)</label>
+            <input id="cpu-file-${player.seat}" type="file" accept=".py" />
+            <label class="upload-field-label" for="cpu-json-${player.seat}">Strategy JSON (.json, optional)</label>
+            <input id="cpu-json-${player.seat}" type="file" accept=".json,application/json" />
+          </div>
           <div id="cpu-upload-status-${player.seat}" class="upload-status muted">${uploadStatusBySeat[player.seat] || "No file selected."}</div>
           <div class="panel-note">Current: ${player.cpu_path || "No CPU loaded."}</div>
         </div>
@@ -517,32 +579,43 @@ function renderCpuConfig(players) {
     .join("");
 
   cpuPlayers.forEach((player) => {
-    document
-      .getElementById(`cpu-file-${player.seat}`)
-      .addEventListener("change", async (event) => {
-        const file = event.target.files && event.target.files[0];
-        setFreezeCpuPanels(Boolean(file));
-        if (!file) {
-          uploadStatusBySeat[player.seat] = "No file selected.";
-          setUploadStatus(`cpu-upload-status-${player.seat}`, "No file selected.", "muted");
-          return;
-        }
+    const fileInput = document.getElementById(`cpu-file-${player.seat}`);
+    const jsonInput = document.getElementById(`cpu-json-${player.seat}`);
 
-        try {
-          uploadStatusBySeat[player.seat] = `Uploading ${file.name}...`;
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploading ${file.name}...`, "muted");
-          const nextState = await uploadCpuFile(file, player.seat);
-          setFreezeCpuPanels(false);
-          uploadStatusBySeat[player.seat] = `Uploaded: ${file.name}`;
-          renderState(nextState);
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploaded: ${file.name}`, "success");
-        } catch (error) {
-          setFreezeCpuPanels(false);
-          uploadStatusBySeat[player.seat] = `Upload failed: ${error.message}`;
-          setUploadStatus(`cpu-upload-status-${player.seat}`, `Upload failed: ${error.message}`, "error");
-          alert(error.message);
-        }
-      });
+    const uploadSeatBundle = async () => {
+      const file = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+      const strategyFile = jsonInput.files && jsonInput.files[0] ? jsonInput.files[0] : null;
+      setFreezeCpuPanels(Boolean(file) || Boolean(strategyFile));
+
+      if (!file) {
+        uploadStatusBySeat[player.seat] = strategyFile
+          ? `Strategy JSON selected: ${strategyFile.name}. Select a .py file to upload.`
+          : "No file selected.";
+        setUploadStatus(`cpu-upload-status-${player.seat}`, uploadStatusBySeat[player.seat], "muted");
+        return;
+      }
+
+      try {
+        const detail = strategyFile ? `${file.name} + ${strategyFile.name}` : file.name;
+        uploadStatusBySeat[player.seat] = `Uploading ${detail}...`;
+        setUploadStatus(`cpu-upload-status-${player.seat}`, `Uploading ${detail}...`, "muted");
+        const nextState = await uploadCpuFile(file, { seat: player.seat, strategyFile });
+        setFreezeCpuPanels(false);
+        uploadStatusBySeat[player.seat] = strategyFile
+          ? `Uploaded: ${file.name} with ${strategyFile.name}`
+          : `Uploaded: ${file.name}`;
+        renderState(nextState);
+        setUploadStatus(`cpu-upload-status-${player.seat}`, uploadStatusBySeat[player.seat], "success");
+      } catch (error) {
+        setFreezeCpuPanels(false);
+        uploadStatusBySeat[player.seat] = `Upload failed: ${error.message}`;
+        setUploadStatus(`cpu-upload-status-${player.seat}`, `Upload failed: ${error.message}`, "error");
+        alert(error.message);
+      }
+    };
+
+    fileInput.addEventListener("change", uploadSeatBundle);
+    jsonInput.addEventListener("change", uploadSeatBundle);
   });
 }
 
@@ -557,6 +630,8 @@ function ensureCpuConfigRendered(players) {
 }
 
 function renderCpuMultiSlots() {
+  // 自己対戦では戦略スロット方式を使い、1 つの Python ファイルを
+  // 複数席へまとめて割り当てられるようにしています。
   const container = document.getElementById("cpu-multi-slots");
   container.innerHTML = cpuMultiSlots
     .map(
@@ -564,7 +639,12 @@ function renderCpuMultiSlots() {
         <div class="cpu-config">
           <strong>CPU Slot ${index + 1}</strong>
           <div class="cpu-config-row">
-            <input id="cpu-multi-file-${slot.id}" type="file" accept=".py" />
+            <div class="cpu-upload-fields">
+              <label class="upload-field-label" for="cpu-multi-file-${slot.id}">CPU Script (.py)</label>
+              <input id="cpu-multi-file-${slot.id}" type="file" accept=".py" />
+              <label class="upload-field-label" for="cpu-multi-json-${slot.id}">Strategy JSON (.json, optional)</label>
+              <input id="cpu-multi-json-${slot.id}" type="file" accept=".json,application/json" />
+            </div>
             <div class="amount-controls">
               <label for="cpu-multi-count-${slot.id}">Players</label>
               <input id="cpu-multi-count-${slot.id}" type="number" min="1" max="9" step="1" value="${slot.count}" />
@@ -579,9 +659,23 @@ function renderCpuMultiSlots() {
   cpuMultiSlots.forEach((slot) => {
     document.getElementById(`cpu-multi-file-${slot.id}`).addEventListener("change", (event) => {
       const file = event.target.files && event.target.files[0];
+      const jsonInput = document.getElementById(`cpu-multi-json-${slot.id}`);
+      const strategyFile = jsonInput?.files && jsonInput.files[0] ? jsonInput.files[0] : null;
       setFreezeCpuPanels(Boolean(file) || cpuMultiSlots.some((entry) => entry.file));
       slot.file = file || null;
-      slot.label = file ? `Selected: ${file.name}` : "No file selected.";
+      slot.strategyFile = strategyFile;
+      slot.label = file
+        ? `Selected: ${file.name}${strategyFile ? ` + ${strategyFile.name}` : ""}`
+        : "No file selected.";
+      setUploadStatus(`cpu-multi-slot-status-${slot.id}`, slot.label, "muted");
+      updateCpuMultiSelectionSummary();
+    });
+    document.getElementById(`cpu-multi-json-${slot.id}`).addEventListener("change", (event) => {
+      const strategyFile = event.target.files && event.target.files[0];
+      slot.strategyFile = strategyFile || null;
+      slot.label = slot.file
+        ? `Selected: ${slot.file.name}${slot.strategyFile ? ` + ${slot.strategyFile.name}` : ""}`
+        : (slot.strategyFile ? `JSON ready: ${slot.strategyFile.name}` : "No file selected.");
       setUploadStatus(`cpu-multi-slot-status-${slot.id}`, slot.label, "muted");
       updateCpuMultiSelectionSummary();
     });
@@ -610,7 +704,7 @@ function updateCpuMultiSelectionSummary() {
     cpuMultiSelectionStatus = "No files selected.";
     cpuMultiSelectionTone = "muted";
   } else {
-    cpuMultiSelectionStatus = `Selected ${selected.length} strategies / ${totalPlayers} players: ${selected.map((slot) => `${slot.file.name} x${slot.count}`).join(", ")}`;
+    cpuMultiSelectionStatus = `Selected ${selected.length} strategies / ${totalPlayers} players: ${selected.map((slot) => `${slot.file.name}${slot.strategyFile ? ` + ${slot.strategyFile.name}` : ""} x${slot.count}`).join(", ")}`;
     cpuMultiSelectionTone = "muted";
   }
   setUploadStatus("cpu-multi-upload-status", cpuMultiSelectionStatus, cpuMultiSelectionTone);
@@ -669,6 +763,7 @@ async function refreshState() {
     ) {
       return;
     }
+    // file input は再描画で選択内容が消えるため、選択中は自動更新を止めます。
     if (hasPendingFileSelection()) {
       return;
     }
@@ -686,6 +781,9 @@ document.getElementById("new-hand-btn").addEventListener("click", async () => {
     const state = await apiFetch(newHandUrl, { method: "POST" });
     renderState(state);
   } catch (error) {
+    const message =
+      error.message || "このハンドはまだ進行中です。アクションを完了してから次のゲームへ進んでください。";
+    document.getElementById("table-message").textContent = message;
     alert(error.message);
   }
 });
@@ -724,6 +822,7 @@ document.getElementById("reveal-folded-btn").addEventListener("click", async () 
 });
 
 async function pollCpuMultiJob(jobId) {
+  // 長時間の自己対戦はサーバー側で走らせ、ここから進捗だけを取りに行きます。
   try {
     const job = await apiFetch(`${cpuMultiJobBaseUrl}/${jobId}`);
     renderCpuMatchProgress(job);
@@ -792,7 +891,7 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
 
     const uploadedPaths = [];
     for (const slot of slotsWithFiles) {
-      const uploaded = await uploadCpuFile(slot.file);
+      const uploaded = await uploadCpuFile(slot.file, { strategyFile: slot.strategyFile });
       for (let index = 0; index < slot.count; index += 1) {
         uploadedPaths.push(uploaded.uploaded_cpu_path);
       }
@@ -806,6 +905,8 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
 
     const hands = Number(document.getElementById("cpu-multi-hands").value);
     const exportStrategyPath = document.getElementById("cpu-multi-export").value.trim();
+    // ライブ再生は小さいジョブでは有用ですが、大きいジョブでは
+    // 実行時間を安定させるため自動的に無効化します。
     const liveReplay = hands <= 200;
     renderCpuMatchProgress({
       status: "running",
@@ -846,7 +947,7 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
 document.getElementById("add-cpu-slot-btn").addEventListener("click", () => {
   setFreezeCpuPanels(true);
   const nextId = cpuMultiSlots.length ? Math.max(...cpuMultiSlots.map((slot) => slot.id)) + 1 : 1;
-  cpuMultiSlots.push({ id: nextId, file: null, count: 1, label: "No file selected." });
+  cpuMultiSlots.push({ id: nextId, file: null, strategyFile: null, count: 1, label: "No file selected." });
   cpuMultiSlotsSignature = null;
   renderCpuMultiSlots();
   updateCpuMultiSelectionSummary();

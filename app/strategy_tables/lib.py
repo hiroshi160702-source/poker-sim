@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+"""戦略表参照型 CPU が共通利用する infoset 分類補助です。"""
+
 RANKS = "23456789TJQKA"
 VALUES = {rank: index for index, rank in enumerate(RANKS, start=2)}
 
 
 def encode_infoset(game_state: dict, player_state: dict) -> str:
+    # infoset のキーをコンパクトにして、戦略表ファイルを重くしすぎず、
+    # それでも重要な局面差は残せるようにしています。
     phase = game_state["phase"]
+    player_count = classify_table_participants(game_state)
     position = classify_position(game_state, player_state)
     pressure = classify_pressure(game_state, player_state)
     stack_bucket = classify_effective_stack(game_state, player_state)
@@ -15,7 +20,7 @@ def encode_infoset(game_state: dict, player_state: dict) -> str:
     else:
         bucket = classify_postflop(player_state["actual_hand"], game_state["community_cards"])
         texture = classify_board_texture(game_state["community_cards"])
-    return "|".join([phase, position, bucket, pressure, stack_bucket, texture])
+    return "|".join([phase, player_count, position, bucket, pressure, stack_bucket, texture])
 
 
 def collapse_infoset(infoset: str, index: int, replacement: str = "any") -> str:
@@ -26,6 +31,8 @@ def collapse_infoset(infoset: str, index: int, replacement: str = "any") -> str:
 
 
 def candidate_infosets(infoset: str) -> list[str]:
+    # 戦略表は厳密一致から、より広い "any" バケットへ順にフォールバックし、
+    # 疎な自己対戦データでも判断できるようにします。
     candidates = []
     seen = set()
 
@@ -35,18 +42,31 @@ def candidate_infosets(infoset: str) -> list[str]:
             candidates.append(key)
 
     add(infoset)
-    for index in (1, 2, 3, 4, 5):
+    for index in (1, 2, 3, 4, 5, 6):
         add(collapse_infoset(infoset, index))
-    for first, second in ((1, 3), (2, 3), (1, 2), (4, 5), (2, 5), (1, 4)):
+    for first, second in ((1, 3), (2, 4), (3, 4), (1, 2), (5, 6), (2, 5), (1, 5)):
         add(collapse_infoset(collapse_infoset(infoset, first), second))
     add(collapse_infoset(collapse_infoset(collapse_infoset(infoset, 1), 2), 3))
-    add(collapse_infoset(collapse_infoset(collapse_infoset(infoset, 2), 4), 5))
+    add(collapse_infoset(collapse_infoset(collapse_infoset(infoset, 3), 5), 6))
     add(collapse_infoset(collapse_infoset(collapse_infoset(collapse_infoset(infoset, 1), 2), 3), 4))
-    add(collapse_infoset(collapse_infoset(collapse_infoset(collapse_infoset(collapse_infoset(infoset, 1), 2), 3), 4), 5))
+    add(collapse_infoset(collapse_infoset(collapse_infoset(collapse_infoset(collapse_infoset(infoset, 2), 3), 4), 5), 6))
     return candidates
 
 
+def classify_table_participants(game_state: dict) -> str:
+    # 戦略表には卓人数を埋め込みますが、game_state のトップレベルへは
+    # 専用キーを増やさず players 配列から直接数えます。
+    active = [
+        player
+        for player in game_state["players"]
+        if player.get("stack", 0) > 0
+    ]
+    return f"{len(active)}p"
+
+
 def classify_position(game_state: dict, player_state: dict) -> str:
+    # ポジション分類はあえて粗めです。卓人数が変わった場合やサンプル数が
+    # 少ない場合でも一般化しやすくするためです。
     total = len(game_state["players"])
     dealer = game_state["dealer_index"]
     seat = player_state["seat"]
@@ -67,6 +87,8 @@ def classify_position(game_state: dict, player_state: dict) -> str:
 
 
 def classify_pressure(game_state: dict, player_state: dict) -> str:
+    # pressure はスタックに対する危険度とポットオッズをまとめた分類で、
+    # 軽いベットと実質コミット局面を分けられるようにしています。
     to_call = max(0, game_state["current_bet"] - player_state["bet_round"])
     if to_call == 0:
         return "none"
@@ -142,6 +164,8 @@ def classify_postflop(hand: list[str], board: list[str]) -> str:
 
 
 def classify_board_texture(board: list[str]) -> str:
+    # ボードテクスチャはポストフロップだけで使い、多すぎる盤面形状を
+    # 少数カテゴリへ潰して戦略表の爆発を防ぎます。
     if len(board) < 3:
         return "na"
     suits = [card[1] for card in board]

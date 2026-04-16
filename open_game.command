@@ -1,6 +1,7 @@
 #!/bin/zsh
 set -eu
 
+# macOS でダブルクリック起動するための簡易ランチャーです。
 SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 cd "$SCRIPT_DIR"
 

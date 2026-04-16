@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+"""自己対戦からヘッズアップ用戦略表を作るための小さな CLI です。"""
+
 import argparse
 import json
 import sys
@@ -13,6 +15,7 @@ from app.selfplay import run_heads_up_cpu_match
 
 
 def main() -> None:
+    # Web UI を開かなくても戦略表生成を回せるようにした補助スクリプトです。
     parser = argparse.ArgumentParser(description="Build a strategy table from CPU self-play.")
     parser.add_argument("--hero", required=True, help="Python file for hero CPU")
     parser.add_argument("--villain", required=True, help="Python file for villain CPU")

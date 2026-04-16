@@ -105,15 +105,15 @@ def decide_action(game_state, player_state, legal_actions):
 情報集合キーは次の形式です。
 
 ```text
-phase|position|bucket|pressure|stack_bucket|texture
+phase|player_count|position|bucket|pressure|stack_bucket|texture
 ```
 
 例:
 
 ```text
-preflop|button|premium|small|deep|na
-flop|late|draw|none|medium|two_tone
-river|any|air|large|shallow|paired
+preflop|2p|button|premium|small|deep|na
+flop|3p|late|draw|none|medium|two_tone
+river|any|any|air|large|shallow|paired
 ```
 
 戦略表の生成例:
@@ -127,6 +127,14 @@ python3 tools/build_strategy_table.py \
 ```
 
 生成済みのサンプル表は [app/sample_cpus/strategy_tables](app/sample_cpus/strategy_tables) にあります。
+
+Monte Carlo CFR 近似でヘッズアップ用の戦略表を作るには次も使えます。
+
+```bash
+python3 tools/strategy.py \
+  --iterations 5000 \
+  --out app/sample_cpus/strategy_tables/cfr_generated.json
+```
 
 ## Project Structure
 

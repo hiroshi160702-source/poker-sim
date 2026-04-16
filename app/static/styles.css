@@ -1,3 +1,4 @@
+/* ポーカーテーブル、左右パネル、自己対戦ダッシュボード全体の見た目です。 */
 :root {
   --bg: #08171a;
   --panel: rgba(7, 24, 28, 0.92);
@@ -90,6 +91,38 @@ body {
   background: rgba(255, 255, 255, 0.03);
 }
 
+.collapsible-panel[open] {
+  padding-bottom: 18px;
+}
+
+.collapsible-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.collapsible-summary::-webkit-details-marker {
+  display: none;
+}
+
+.collapsible-summary::after {
+  content: "▾";
+  color: var(--accent);
+  font-size: 1rem;
+  transition: transform 160ms ease;
+}
+
+.collapsible-panel:not([open]) .collapsible-summary::after {
+  transform: rotate(-90deg);
+}
+
+.collapsible-body {
+  margin-top: 10px;
+}
+
 .hero-meta,
 .button-row {
   display: flex;
@@ -136,6 +169,17 @@ body {
   background: rgba(0, 0, 0, 0.22);
   color: var(--text);
   padding: 12px 14px;
+}
+
+.cpu-upload-fields {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.upload-field-label {
+  font-size: 0.86rem;
+  color: rgba(231, 241, 235, 0.82);
 }
 
 .action-buttons,
@@ -208,6 +252,8 @@ button:disabled {
 }
 
 .table-felt {
+  /* テーブルは固定アスペクト比にして、app.js 側の座席配置計算が
+     画面サイズによらず安定するようにしています。 */
   position: relative;
   width: 100%;
   aspect-ratio: 1.45 / 1;
@@ -262,6 +308,8 @@ button:disabled {
 }
 
 .seat {
+  /* 各席は現在人数に応じて left/top を動的計算し、その位置へ
+     浮かぶカードのように配置しています。 */
   position: absolute;
   width: 180px;
   min-height: 150px;
@@ -625,6 +673,22 @@ button:disabled {
 .list-card strong {
   display: block;
   margin-bottom: 4px;
+}
+
+.log-card {
+  display: grid;
+  gap: 8px;
+}
+
+.log-card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.log-card-header strong {
+  margin: 0;
 }
 
 .compact-list {

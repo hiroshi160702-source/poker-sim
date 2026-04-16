@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ja">
   <head>
+    <!-- 静的なページ枠だけを置き、主要な中身は app.js が差し込みます。 -->
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Texas Hold'em Simulator</title>
@@ -10,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260415-ui-recover-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -59,126 +60,159 @@
           </div>
         </div>
 
-        <div class="action-panel">
-          <h2>Your Move</h2>
-          <div id="turn-indicator" class="turn-indicator">Waiting for hand start</div>
-          <div class="amount-controls">
-            <label for="bet-amount">Bet / Raise To</label>
-            <input id="bet-amount" type="number" min="0" step="25" />
+        <details class="action-panel collapsible-panel" open>
+          <summary class="collapsible-summary">
+            <h2>Your Move</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div id="turn-indicator" class="turn-indicator">Waiting for hand start</div>
+            <div class="amount-controls">
+              <label for="bet-amount">Bet / Raise To</label>
+              <input id="bet-amount" type="number" min="0" step="25" />
+            </div>
+            <div id="action-buttons" class="action-buttons"></div>
           </div>
-          <div id="action-buttons" class="action-buttons"></div>
-        </div>
+        </details>
 
         <div class="button-row">
           <button id="new-hand-btn" class="primary-btn">Start / Next Hand</button>
           <button id="reset-table-btn" class="ghost-btn">Reset Table</button>
         </div>
 
-        <div class="cpu-panel">
-          <h2>Table Setup</h2>
-          <div class="setup-grid">
-            <div class="amount-controls">
-              <label for="starting-stack">Starting Stack</label>
-              <input id="starting-stack" type="number" min="500" max="50000" step="100" />
+        <details class="cpu-panel collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>Table Setup</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div class="setup-grid">
+              <div class="amount-controls">
+                <label for="starting-stack">Starting Stack</label>
+                <input id="starting-stack" type="number" min="500" max="50000" step="100" />
+              </div>
+              <div class="amount-controls">
+                <label for="cpu-count">CPU Players</label>
+                <select id="cpu-count">
+                  <option value="1">1</option>
+                  <option value="2">2</option>
+                  <option value="3">3</option>
+                  <option value="4">4</option>
+                  <option value="5">5</option>
+                  <option value="6">6</option>
+                  <option value="7">7</option>
+                  <option value="8">8</option>
+                </select>
+              </div>
             </div>
-            <div class="amount-controls">
-              <label for="cpu-count">CPU Players</label>
-              <select id="cpu-count">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-                <option value="6">6</option>
-                <option value="7">7</option>
-                <option value="8">8</option>
-              </select>
+            <div class="button-row">
+              <button id="apply-setup-btn" class="primary-btn">Apply Setup</button>
             </div>
           </div>
-          <div class="button-row">
-            <button id="apply-setup-btn" class="primary-btn">Apply Setup</button>
-          </div>
-        </div>
+        </details>
 
-        <div class="cpu-panel">
-          <h2>CPU Files</h2>
-          <p class="panel-note">
-            各CPUは `.py` ファイルをアップロードして戦略を差し替えます。ファイルを選ぶとその席へ自動反映されます。
-          </p>
-          <div id="cpu-config-list" class="cpu-config-list"></div>
-        </div>
+        <details class="cpu-panel collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>CPU Files</h2>
+          </summary>
+          <div class="collapsible-body">
+            <p class="panel-note">
+              各CPUは `.py` ファイルをアップロードして戦略を差し替えます。必要なら対応する `.json` も一緒に選べます。`.json` は任意です。
+            </p>
+            <div id="cpu-config-list" class="cpu-config-list"></div>
+          </div>
+        </details>
 
-        <div class="cpu-panel">
-          <h2>CPU Multiplayer</h2>
-          <p class="panel-note">
-            複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で戦略枠を追加して、各枠ごとに「このCPUを何人入れるか」も決められます。
-          </p>
-          <div class="selfplay-note">
-            `Run Multiplayer Match` を押すと、指定したハンド数だけCPU同士で自動対戦し、進捗・ライブ再生・順位表・戦略表生成結果を表示します。
-          </div>
-          <div class="button-row">
-            <button id="add-cpu-slot-btn" class="ghost-btn">Add CPU Slot</button>
-            <button id="remove-cpu-slot-btn" class="ghost-btn">Remove CPU Slot</button>
-          </div>
-          <div id="cpu-multi-slots" class="cpu-config-list"></div>
-          <div class="setup-grid">
-            <div class="amount-controls">
-              <label for="cpu-multi-hands">Hands</label>
-              <input id="cpu-multi-hands" type="number" min="1" max="200000" step="10" value="500" />
+        <details class="cpu-panel collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>CPU Multiplayer</h2>
+          </summary>
+          <div class="collapsible-body">
+            <!-- ここは現在の対局操作ではなく、自己対戦と戦略表生成のための領域です。 -->
+            <p class="panel-note">
+              複数CPUを同時に卓へ座らせて自己対戦を回します。`Add CPU Slot` で戦略枠を追加して、各枠ごとに「このCPUを何人入れるか」も決められます。`.json` が必要なCPUは同じ枠で一緒に選べます。
+            </p>
+            <div class="selfplay-note">
+              `Run Multiplayer Match` を押すと、指定したハンド数だけCPU同士で自動対戦し、進捗・ライブ再生・順位表・戦略表生成結果を表示します。
             </div>
-            <div class="amount-controls">
-              <label for="cpu-multi-export">Export Strategy JSON</label>
-              <input id="cpu-multi-export" type="text" placeholder="/Users/.../multi_generated_strategy.json" />
+            <div class="button-row">
+              <button id="add-cpu-slot-btn" class="ghost-btn">Add CPU Slot</button>
+              <button id="remove-cpu-slot-btn" class="ghost-btn">Remove CPU Slot</button>
+            </div>
+            <div id="cpu-multi-slots" class="cpu-config-list"></div>
+            <div class="setup-grid">
+              <div class="amount-controls">
+                <label for="cpu-multi-hands">Hands</label>
+                <input id="cpu-multi-hands" type="number" min="1" max="200000" step="10" value="500" />
+              </div>
+              <div class="amount-controls">
+                <label for="cpu-multi-export">Export Strategy JSON</label>
+                <input id="cpu-multi-export" type="text" placeholder="/Users/.../multi_generated_strategy.json" />
+              </div>
+            </div>
+            <div class="button-row">
+              <button id="run-cpu-multi-btn" class="primary-btn">Run Multiplayer Match</button>
+            </div>
+            <div id="cpu-multi-upload-status" class="upload-status muted">No files selected.</div>
+            <div class="selfplay-progress-card">
+              <div class="selfplay-progress-header">
+                <strong>Run Status</strong>
+                <span id="cpu-multi-progress-label" class="pill">Idle</span>
+              </div>
+              <div class="progress-track">
+                <div id="cpu-multi-progress-bar" class="progress-fill"></div>
+              </div>
+              <div id="cpu-multi-progress-status" class="panel-note">まだ自己対戦は実行していません。</div>
+              <div id="cpu-multi-progress-preview" class="history-list compact-list"></div>
             </div>
           </div>
-          <div class="button-row">
-            <button id="run-cpu-multi-btn" class="primary-btn">Run Multiplayer Match</button>
-          </div>
-          <div id="cpu-multi-upload-status" class="upload-status muted">No files selected.</div>
-          <div class="selfplay-progress-card">
-            <div class="selfplay-progress-header">
-              <strong>Run Status</strong>
-              <span id="cpu-multi-progress-label" class="pill">Idle</span>
-            </div>
-            <div class="progress-track">
-              <div id="cpu-multi-progress-bar" class="progress-fill"></div>
-            </div>
-            <div id="cpu-multi-progress-status" class="panel-note">まだ自己対戦は実行していません。</div>
-            <div id="cpu-multi-progress-preview" class="history-list compact-list"></div>
-          </div>
-        </div>
+        </details>
       </aside>
 
       <aside class="panel info-panel">
-        <section class="stats-section">
-          <h2>Your Equity</h2>
-          <div id="hero-win-rate-card" class="hero-win-rate-card"></div>
-        </section>
-
-        <section class="stats-section">
-          <h2>Action Log</h2>
-          <div id="log-list" class="log-list"></div>
-        </section>
-
-        <section class="stats-section">
-          <h2>Recent Hands</h2>
-          <div id="history-list" class="history-list"></div>
-        </section>
-
-        <section class="stats-section">
-          <h2>CPU Self-Play Result</h2>
-          <div id="cpu-selfplay-summary" class="panel-note">結果はここに表示されます。</div>
-          <div id="cpu-multi-live-replay" class="hero-win-rate-card">
-            <div class="panel-note">ライブ再生はここに表示されます。</div>
+        <details class="stats-section collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>Your Equity</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div id="hero-win-rate-card" class="hero-win-rate-card"></div>
           </div>
-          <div class="button-row">
-            <button id="download-strategy-btn" class="ghost-btn" disabled>Download Strategy Table</button>
+        </details>
+
+        <details class="stats-section collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>Action Log</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div id="log-list" class="log-list"></div>
           </div>
-          <div id="cpu-match-result" class="history-list"></div>
-        </section>
+        </details>
+
+        <details class="stats-section collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>Recent Hands</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div id="history-list" class="history-list"></div>
+          </div>
+        </details>
+
+        <details class="stats-section collapsible-panel">
+          <summary class="collapsible-summary">
+            <h2>CPU Self-Play Result</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div id="cpu-selfplay-summary" class="panel-note">結果はここに表示されます。</div>
+            <div id="cpu-multi-live-replay" class="hero-win-rate-card">
+              <div class="panel-note">ライブ再生はここに表示されます。</div>
+            </div>
+            <div class="button-row">
+              <button id="download-strategy-btn" class="ghost-btn" disabled>Download Strategy Table</button>
+            </div>
+            <div id="cpu-match-result" class="history-list"></div>
+          </div>
+        </details>
       </aside>
     </div>
 
-    <script src="/static/app.js" defer></script>
+    <script src="/static/app.js?v=20260415-ui-recover-1" defer></script>
   </body>
 </html>

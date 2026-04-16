@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+"""CPU 自己対戦の実行と戦略表の書き出しを担当する補助関数群です。"""
+
 import json
+import time
 from collections import defaultdict
 from pathlib import Path
 from typing import Callable, Dict, Optional
@@ -18,10 +21,11 @@ def run_heads_up_cpu_match(
     starting_stack: int,
     export_strategy_path: Optional[str] = None,
 ) -> dict:
+    # 旧来のヘッズアップ用補助ですが、CLI の戦略表生成ではまだ使っています。
     game = HoldemGame(logs_dir, embedded_cpu_dir)
     game.configure_table(starting_stack=starting_stack, cpu_count=1)
 
-    # Make seat 0 CPU-controlled for self-play.
+    # 自己対戦では 0 番席も CPU 化します。
     game.players[0].is_human = False
     game.players[0].cpu_path = str(Path(hero_cpu_path).expanduser().resolve())
     game.cpu_loader.load(game.players[0].cpu_path)
@@ -48,6 +52,8 @@ def run_heads_up_cpu_match(
     initial_stack = starting_stack
 
     for hand_index in range(hands):
+        # autoplay_cpus=False にして、エンジンが自動進行する前に各 CPU の
+        # 明示的な意思決定を記録できるようにします。
         game.start_new_hand(autoplay_cpus=False)
         safety = 0
         while not game.awaiting_new_hand and safety < 200:
@@ -96,7 +102,7 @@ def run_heads_up_cpu_match(
         )
         stats["recent_results"] = stats["recent_results"][:15]
 
-        # Reset stacks if somebody busted so long matches keep running.
+        # 長い対戦を止めないため、誰かが飛んだらスタックだけ初期値に戻します。
         if game.players[0].stack == 0 or game.players[1].stack == 0:
             game.players[0].stack = initial_stack
             game.players[1].stack = initial_stack
@@ -130,6 +136,8 @@ def run_multiway_cpu_match(
     progress_callback: Optional[Callable[[dict], None]] = None,
     capture_replay: bool = False,
 ) -> dict:
+    # 多人数自己対戦は専用の独立した卓で回し、ブラウザ上の対局状態とは
+    # 完全に切り離して扱います。
     if not 2 <= len(cpu_paths) <= 9:
         raise ValueError("CPU paths must contain between 2 and 9 players.")
 
@@ -172,8 +180,10 @@ def run_multiway_cpu_match(
     infoset_visits: Dict[str, int] = defaultdict(int)
     phase_visits: Dict[str, int] = defaultdict(int)
     initial_stack = starting_stack
+    started_at = time.perf_counter()
 
     if progress_callback:
+        # 最初の進捗を先に返して、UI をすぐ「実行中」表示へ切り替えます。
         progress_callback(
             {
                 "completed_hands": 0,
@@ -181,6 +191,8 @@ def run_multiway_cpu_match(
                 "percent": 0.0,
                 "message": "CPU self-play is starting.",
                 "latest_snapshot": None,
+                "elapsed_seconds": 0.0,
+                "estimated_remaining_seconds": None,
             }
         )
 
@@ -246,13 +258,21 @@ def run_multiway_cpu_match(
 
         latest_snapshot = None
         if capture_replay:
+            # リプレイ用スナップショットは軽量に保ち、各ハンド終了時点の状態だけ
+            # を持つことでメモリ消費を増やしすぎないようにします。
             latest_snapshot = build_replay_snapshot(game)
             stats["last_replay_snapshot"] = latest_snapshot
 
         should_report_progress = False
         if progress_callback:
             completed_hands = _hand_index + 1
-            update_interval = max(1, hands // 100)
+            update_interval = 1000
+            elapsed_seconds = max(0.0, time.perf_counter() - started_at)
+            hands_per_second = completed_hands / elapsed_seconds if elapsed_seconds > 0 else 0.0
+            remaining_hands = max(0, hands - completed_hands)
+            estimated_remaining_seconds = (
+                remaining_hands / hands_per_second if hands_per_second > 0 else None
+            )
             should_report_progress = (
                 capture_replay
                 or completed_hands == 1
@@ -268,6 +288,12 @@ def run_multiway_cpu_match(
                     "message": f"Simulated {completed_hands} / {hands} hands.",
                     "latest_snapshot": latest_snapshot,
                     "leaderboard_preview": build_leaderboard_preview(stats["players"], completed_hands),
+                    "elapsed_seconds": round(elapsed_seconds, 1),
+                    "estimated_remaining_seconds": (
+                        round(estimated_remaining_seconds, 1)
+                        if estimated_remaining_seconds is not None
+                        else None
+                    ),
                 }
             )
 
@@ -308,6 +334,7 @@ def run_multiway_cpu_match(
 
     strategy_table = to_probability_table(action_counts, infoset_visits)
     stats["strategy_table"] = strategy_table
+    stats["elapsed_seconds"] = round(max(0.0, time.perf_counter() - started_at), 1)
     stats["strategy_table_filename"] = (
         Path(export_strategy_path).expanduser().resolve().name
         if export_strategy_path
@@ -377,6 +404,8 @@ def to_probability_table(
     action_counts: Dict[str, Dict[str, int]],
     infoset_visits: Dict[str, int],
 ) -> dict:
+    # 厳密な訪問回数に加えて、より広い親バケットの情報も混ぜることで、
+    # 訪問数の少ない状態でも使える戦略表にします。
     generalized_counts = build_generalized_counts(action_counts)
     generalized_visits = build_generalized_visits(infoset_visits)
     table = {}
@@ -421,6 +450,8 @@ def build_generalized_visits(infoset_visits: Dict[str, int]) -> Dict[str, float]
 
 
 def generalization_targets(infoset: str) -> list[tuple[str, float]]:
+    # 粗い一般化ほど重みを小さくして、十分にサンプルがある状態では
+    # 厳密な観測結果が優先されるようにします。
     targets = []
     seen = {infoset}
     weights = {
