@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""Monte Carlo CFR 近似でヘッズアップ用の戦略表 JSON を生成する CLI です。"""
+"""安定化した Monte Carlo CFR 近似でヘッズアップ用戦略表を作る CLI です。"""
 
 import argparse
 import json
@@ -17,12 +17,17 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 from app.engine import HoldemGame
-from app.strategy_tables.lib import encode_infoset
 from app.sample_cpus import strategy_table_cpu as runtime_table_cpu
+from app.strategy_tables.lib import encode_infoset
+from app.strategy_tables.preflop_blueprint import (
+    blend_with_blueprint,
+    build_preflop_blueprint,
+    normalize_weights,
+)
 
 
 class SilentHoldemGame(HoldemGame):
-    """CFR 実行中にハンドログをファイル保存しない軽量版です。"""
+    """学習中はハンドログを書かない軽量版です。"""
 
     def persist_hand_log(self) -> None:  # pragma: no cover - 副作用抑止だけの差し替え
         return
@@ -43,28 +48,47 @@ def load_runtime_strategy_table(table_path: str | None = None) -> dict:
 
 
 def decide_action(game_state, player_state, legal_actions):
-    """生成済み戦略表を読んで、このファイル自体も CPU として動けるようにします。"""
+    """このファイル自体も CPU として動けるよう、生成済み表を参照します。"""
 
     table = load_runtime_strategy_table()
     infoset = encode_infoset(game_state, player_state)
     strategy = runtime_table_cpu.lookup_strategy(table, infoset, legal_actions)
+    strategy = blend_with_blueprint(
+        strategy,
+        infoset,
+        legal_actions,
+        table_weight=0.82,
+        game_state=game_state,
+        player_state=player_state,
+    )
+    strategy = runtime_table_cpu.apply_safety_overrides(strategy, infoset, legal_actions)
     action_type = runtime_table_cpu.sample_action(strategy)
     return runtime_table_cpu.materialize_action(action_type, legal_actions, infoset)
 
 
 class MonteCarloCfrTrainer:
-    """現在の抽象化 infoset に合わせて近似戦略表を作る簡易 MCCFR です。"""
+    """安定化用の visit 数・pruning・平滑化を持った簡易 MCCFR です。"""
 
-    def __init__(self, iterations: int, starting_stack: int, seed: int | None = None) -> None:
+    def __init__(
+        self,
+        iterations: int,
+        starting_stack: int,
+        seed: int | None = None,
+        min_visits: int = 25,
+        smoothing_alpha: float = 6.0,
+    ) -> None:
         self.iterations = iterations
         self.starting_stack = starting_stack
         self.random = random.Random(seed)
+        self.min_visits = max(1, min_visits)
+        self.smoothing_alpha = max(0.0, smoothing_alpha)
         self.regrets: DefaultDict[str, DefaultDict[str, float]] = defaultdict(
             lambda: defaultdict(float)
         )
         self.strategy_sums: DefaultDict[str, DefaultDict[str, float]] = defaultdict(
             lambda: defaultdict(float)
         )
+        self.visit_counts: DefaultDict[str, int] = defaultdict(int)
 
     def train(self) -> dict[str, dict[str, float]]:
         for _iteration in range(self.iterations):
@@ -89,6 +113,7 @@ class MonteCarloCfrTrainer:
                 break
 
             infoset = encode_infoset(game.serialize_for_cpu(), player.to_public_dict(True))
+            self.visit_counts[infoset] += 1
             strategy = self.current_strategy(infoset, legal_actions)
             self.accumulate_average_strategy(infoset, legal_actions, strategy)
 
@@ -108,7 +133,9 @@ class MonteCarloCfrTrainer:
             payload = self.materialize_action(chosen_action, legal_actions)
             game.apply_player_action(seat, payload["type"], payload.get("amount"))
 
-    def evaluate_actions(self, game: SilentHoldemGame, seat: int, legal_actions: list[dict]) -> dict[str, float]:
+    def evaluate_actions(
+        self, game: SilentHoldemGame, seat: int, legal_actions: list[dict]
+    ) -> dict[str, float]:
         values: dict[str, float] = {}
         for action in legal_actions:
             branch = deepcopy(game)
@@ -153,7 +180,14 @@ class MonteCarloCfrTrainer:
         }
         total = sum(positive.values())
         if total > 0:
-            return {action_type: value / total for action_type, value in positive.items()}
+            regret_strategy = {action_type: value / total for action_type, value in positive.items()}
+            visits = self.visit_counts.get(infoset, 0)
+            table_weight = min(0.92, 0.45 + visits / 120.0)
+            return blend_with_blueprint(regret_strategy, infoset, legal_actions, table_weight=table_weight)
+
+        blueprint = build_preflop_blueprint(infoset, legal_actions)
+        if blueprint:
+            return blueprint
         uniform = 1.0 / len(legal_actions)
         return {action["type"]: uniform for action in legal_actions}
 
@@ -187,28 +221,92 @@ class MonteCarloCfrTrainer:
         fallback = legal_actions[0]
         return {"type": fallback["type"], "amount": fallback.get("amount")}
 
+    def strategy_prior(self, infoset: str, actions: list[str]) -> dict[str, float]:
+        phase, _player_count, _position, bucket, pressure, stack_bucket, _texture = infoset.split("|")
+        blueprint = build_preflop_blueprint(
+            infoset,
+            [{"type": action} for action in actions],
+        )
+        if blueprint:
+            return {action: max(0.05, blueprint.get(action, 0.0) * 12.0) for action in actions}
+
+        prior = {action: 1.0 for action in actions}
+        weak_bucket = bucket in {"weak", "air", "marginal"}
+        medium_bucket = bucket in {"medium", "draw", "speculative"}
+        premium_bucket = bucket in {"premium", "strong", "monster", "made", "strong_pair"}
+        jammed = pressure == "jam"
+
+        for action in actions:
+            if action in {"check", "call"}:
+                prior[action] = 3.0 if weak_bucket else 2.0
+            elif action == "fold":
+                prior[action] = 2.4 if weak_bucket and not jammed else 1.2
+            elif action in {"bet", "raise"}:
+                if weak_bucket:
+                    prior[action] = 0.45
+                elif medium_bucket:
+                    prior[action] = 0.9
+                elif premium_bucket:
+                    prior[action] = 1.8
+            elif action == "all-in":
+                if weak_bucket and not jammed:
+                    prior[action] = 0.05
+                elif medium_bucket and stack_bucket != "shallow" and not jammed:
+                    prior[action] = 0.12
+                elif premium_bucket or jammed:
+                    prior[action] = 0.9
+                else:
+                    prior[action] = 0.25
+
+        if phase != "preflop" and weak_bucket and not jammed and "all-in" in prior:
+            prior["all-in"] *= 0.5
+        return prior
+
+    def smooth_strategy(
+        self, infoset: str, weights: dict[str, float], visits: int
+    ) -> dict[str, float]:
+        actions = sorted(weights)
+        prior = self.strategy_prior(infoset, actions)
+        smoothed = {}
+        alpha = self.smoothing_alpha
+        for action in actions:
+            smoothed[action] = weights[action] + alpha * prior.get(action, 1.0)
+        normalized = normalize_weights(smoothed)
+        blend_weight = min(0.9, max(0.55, visits / 160.0))
+        return blend_with_blueprint(normalized, infoset, [{"type": action} for action in actions], table_weight=blend_weight)
+
     def average_strategy_table(self) -> dict[str, dict[str, float]]:
         table: dict[str, dict[str, float]] = {}
         for infoset, weights in self.strategy_sums.items():
-            total = sum(weights.values())
-            if total <= 0:
+            visits = self.visit_counts.get(infoset, 0)
+            if visits < self.min_visits:
                 continue
+            smoothed = self.smooth_strategy(infoset, dict(weights), visits)
             table[infoset] = {
-                action: round(value / total, 6)
-                for action, value in sorted(weights.items())
+                action: round(value, 6)
+                for action, value in sorted(smoothed.items())
             }
         return table
+
+    def pruned_visit_counts(self) -> dict[str, int]:
+        return {
+            infoset: count
+            for infoset, count in sorted(self.visit_counts.items())
+            if count >= self.min_visits
+        }
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Build a heads-up strategy table with approximate Monte Carlo CFR."
+        description="Build a stabilized heads-up strategy table with approximate Monte Carlo CFR."
     )
-    parser.add_argument("--iterations", type=int, default=5000, help="CFR iterations")
+    parser.add_argument("--iterations", type=int, default=20000, help="CFR iterations")
     parser.add_argument("--stack", type=int, default=2000, help="Starting stack")
     parser.add_argument(
         "--out",
-        default=str(BASE_DIR / "app" / "sample_cpus" / "strategy_tables" / "cfr_generated.json"),
+        default=str(
+            BASE_DIR / "app" / "sample_cpus" / "strategy_tables" / "stable_heads_up_cfr.json"
+        ),
         help="Output JSON path",
     )
     parser.add_argument("--seed", type=int, default=7, help="Random seed")
@@ -218,12 +316,26 @@ def main() -> None:
         default=1000,
         help="Progress interval. Set 0 to disable progress output.",
     )
+    parser.add_argument(
+        "--min-visits",
+        type=int,
+        default=25,
+        help="Discard infosets visited fewer than this count.",
+    )
+    parser.add_argument(
+        "--smoothing-alpha",
+        type=float,
+        default=6.0,
+        help="Pseudo-count strength used when smoothing strategy probabilities.",
+    )
     args = parser.parse_args()
 
     trainer = MonteCarloCfrTrainer(
         iterations=args.iterations,
         starting_stack=args.stack,
         seed=args.seed,
+        min_visits=args.min_visits,
+        smoothing_alpha=args.smoothing_alpha,
     )
 
     if args.print_every > 0:
@@ -233,20 +345,29 @@ def main() -> None:
             trainer.train()
             trainer.iterations = args.iterations
             done = chunk_start + chunk
-            print(f"[cfr] {done}/{args.iterations} iterations completed", file=sys.stderr)
+            print(f"[stable-cfr] {done}/{args.iterations} iterations completed", file=sys.stderr)
     else:
         trainer.train()
 
     table = trainer.average_strategy_table()
+    visit_counts = trainer.pruned_visit_counts()
+
     out_path = Path(args.out).expanduser().resolve()
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(table, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    visits_path = out_path.with_name(f"{out_path.stem}_visits.json")
+    visits_path.write_text(json.dumps(visit_counts, ensure_ascii=False, indent=2), encoding="utf-8")
 
     summary = {
         "iterations": args.iterations,
         "starting_stack": args.stack,
         "infosets": len(table),
+        "visit_entries": len(visit_counts),
+        "min_visits": args.min_visits,
+        "smoothing_alpha": args.smoothing_alpha,
         "output": str(out_path),
+        "visits_output": str(visits_path),
     }
     print(json.dumps(summary, ensure_ascii=False, indent=2))
 

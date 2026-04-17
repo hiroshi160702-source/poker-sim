@@ -56,12 +56,23 @@ def candidate_infosets(infoset: str) -> list[str]:
 def classify_table_participants(game_state: dict) -> str:
     # 戦略表には卓人数を埋め込みますが、game_state のトップレベルへは
     # 専用キーを増やさず players 配列から直接数えます。
-    active = [
+    contenders = [
         player
         for player in game_state["players"]
-        if player.get("stack", 0) > 0
+        if player.get("in_hand") and not player.get("folded")
     ]
-    return f"{len(active)}p"
+    if len(contenders) >= 2:
+        return f"{len(contenders)}p"
+
+    # オールインで stack=0 になった相手は、まだハンド内の参加者です。
+    # ここで stack>0 だけを見ると 1p の不自然な infoset が出るため、
+    # 最低でも 2 人局面として扱います。
+    alive = [
+        player
+        for player in game_state["players"]
+        if player.get("stack", 0) > 0 or (player.get("in_hand") and not player.get("folded"))
+    ]
+    return f"{max(2, len(alive))}p"
 
 
 def classify_position(game_state: dict, player_state: dict) -> str:

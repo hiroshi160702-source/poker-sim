@@ -9,6 +9,7 @@ from pathlib import Path
 
 import app as app_package
 from app.strategy_tables.lib import candidate_infosets, encode_infoset
+from app.strategy_tables.preflop_blueprint import blend_with_blueprint
 
 PACKAGE_ROOT = Path(app_package.__file__).resolve().parent
 DEFAULT_TABLE_CANDIDATES = [
@@ -25,6 +26,15 @@ def decide_action(game_state, player_state, legal_actions):
     table = load_strategy_table()
     infoset = encode_infoset(game_state, player_state)
     strategy = lookup_strategy(table, infoset, legal_actions)
+    strategy = blend_with_blueprint(
+        strategy,
+        infoset,
+        legal_actions,
+        table_weight=0.82,
+        game_state=game_state,
+        player_state=player_state,
+    )
+    strategy = apply_safety_overrides(strategy, infoset, legal_actions)
     action_type = sample_action(strategy)
     return materialize_action(action_type, legal_actions, infoset)
 
@@ -81,6 +91,56 @@ def normalize(weights):
         uniform = 1.0 / len(weights)
         return {action: uniform for action in weights}
     return {action: value / total for action, value in weights.items()}
+
+
+def apply_safety_overrides(strategy, infoset, legal_actions):
+    # 自己対戦由来の疎な戦略表には、弱いハンドでも raise/all-in に
+    # 偏った行が残ることがあります。実戦側では最低限の安全弁を入れて、
+    # 明らかに不自然なオールイン頻度を抑えます。
+    weights = dict(strategy)
+    legal_types = {action["type"] for action in legal_actions}
+    if "all-in" not in legal_types and "raise" not in legal_types and "bet" not in legal_types:
+        return normalize(weights)
+
+    phase, player_count, _position, bucket, pressure, stack_bucket, _texture = infoset.split("|")
+    player_total = int(player_count[:-1]) if player_count.endswith("p") and player_count[:-1].isdigit() else 2
+    weak_bucket = bucket in {"weak", "air", "marginal"}
+    medium_bucket = bucket in {"medium", "draw", "speculative"}
+    already_committed = pressure == "jam"
+    multiway = player_total >= 3
+
+    if "all-in" in weights:
+        if weak_bucket and not already_committed:
+            weights["all-in"] *= 0.05
+        elif medium_bucket and not already_committed:
+            weights["all-in"] *= 0.18
+        elif phase != "preflop" and stack_bucket != "shallow" and not already_committed:
+            weights["all-in"] *= 0.35
+        if multiway and not already_committed:
+            weights["all-in"] *= 0.45
+
+    if weak_bucket and pressure in {"none", "tiny", "small"}:
+        if "raise" in weights:
+            weights["raise"] *= 0.35
+        if "bet" in weights:
+            weights["bet"] *= 0.35
+    elif medium_bucket and pressure in {"none", "tiny"}:
+        if "raise" in weights:
+            weights["raise"] *= 0.7
+        if "bet" in weights:
+            weights["bet"] *= 0.7
+
+    passive_boost = 1.0
+    if weak_bucket:
+        passive_boost = 1.6 if pressure in {"none", "tiny", "small"} else 1.25
+    elif medium_bucket and pressure in {"none", "tiny"}:
+        passive_boost = 1.2
+
+    for action_type in ("check", "call", "fold"):
+        if action_type in weights:
+            weights[action_type] *= passive_boost
+
+    return normalize(weights)
 
 
 def sample_action(strategy):
