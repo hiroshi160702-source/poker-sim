@@ -3,6 +3,7 @@ from __future__ import annotations
 """ローカル版と公開版の両方で使う FastAPI の入口です。"""
 
 import re
+import sys
 import threading
 import uuid
 import time
@@ -19,6 +20,12 @@ from .engine import HoldemGame
 from .selfplay import run_multiway_cpu_match
 
 BASE_DIR = Path(__file__).resolve().parent
+PROJECT_DIR = BASE_DIR.parent
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+from tools.strategy import build_and_save_strategy_table
+
 STATIC_DIR = BASE_DIR / "static"
 LOGS_DIR = BASE_DIR.parent / "logs"
 EMBEDDED_CPU_DIR = BASE_DIR.parent / "embedded_cpus"
@@ -29,6 +36,8 @@ app = FastAPI(title="Texas Hold'em Simulator", version="0.1.0")
 game = HoldemGame(LOGS_DIR, EMBEDDED_CPU_DIR)
 cpu_multi_jobs: dict[str, dict] = {}
 cpu_multi_jobs_lock = threading.Lock()
+cfr_training_jobs: dict[str, dict] = {}
+cfr_training_jobs_lock = threading.Lock()
 
 
 class ActionRequest(BaseModel):
@@ -54,9 +63,20 @@ class EmbeddedCpuRequest(BaseModel):
 class CpuMultiMatchRequest(BaseModel):
     cpu_paths: list[str]
     hands: int = 100
-    starting_stack: int = 2000
+    starting_stack: int = 5000
     export_strategy_path: Optional[str] = None
     live_replay: bool = True
+
+
+class CfrTrainingRequest(BaseModel):
+    iterations: int = 20000
+    starting_stack: int = 5000
+    out_path: str
+    base_table_path: Optional[str] = None
+    min_visits: int = 25
+    smoothing_alpha: float = 6.0
+    seed: int = 7
+    progress_every: int = 1000
 
 
 def sanitize_upload_name(filename: str, default_suffix: str = ".py") -> str:
@@ -366,6 +386,101 @@ async def start_cpu_multiplayer(request: CpuMultiMatchRequest) -> dict:
 async def get_cpu_multiplayer_job(job_id: str) -> dict:
     with cpu_multi_jobs_lock:
         job = cpu_multi_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found.")
+        return job
+
+
+@app.post("/api/start-cfr-training")
+async def start_cfr_training(request: CfrTrainingRequest) -> dict:
+    job_id = uuid.uuid4().hex
+    with cfr_training_jobs_lock:
+        cfr_training_jobs[job_id] = {
+            "job_id": job_id,
+            "status": "queued",
+            "completed_iterations": 0,
+            "total_iterations": request.iterations,
+            "percent": 0.0,
+            "message": "Waiting to start.",
+            "result": None,
+            "error": None,
+            "elapsed_seconds": 0.0,
+            "estimated_remaining_seconds": None,
+            "infosets": 0,
+            "started_at": time.time(),
+        }
+
+    def progress_callback(payload: dict) -> None:
+        with cfr_training_jobs_lock:
+            job = cfr_training_jobs.get(job_id)
+            if not job:
+                return
+            job["status"] = "running"
+            job["completed_iterations"] = payload.get(
+                "completed_iterations",
+                job["completed_iterations"],
+            )
+            job["total_iterations"] = payload.get("total_iterations", job["total_iterations"])
+            job["percent"] = payload.get("percent", job["percent"])
+            job["message"] = payload.get("message", job["message"])
+            job["elapsed_seconds"] = payload.get("elapsed_seconds", job["elapsed_seconds"])
+            job["estimated_remaining_seconds"] = payload.get(
+                "estimated_remaining_seconds",
+                job["estimated_remaining_seconds"],
+            )
+            job["infosets"] = payload.get("infosets", job["infosets"])
+
+    def worker() -> None:
+        try:
+            result = build_and_save_strategy_table(
+                iterations=request.iterations,
+                starting_stack=request.starting_stack,
+                out_path=request.out_path,
+                seed=request.seed,
+                min_visits=request.min_visits,
+                smoothing_alpha=request.smoothing_alpha,
+                base_table_path=request.base_table_path,
+                progress_callback=progress_callback,
+                progress_every=request.progress_every,
+            )
+            with cfr_training_jobs_lock:
+                job = cfr_training_jobs.get(job_id)
+                if not job:
+                    return
+                job["status"] = "completed"
+                job["completed_iterations"] = request.iterations
+                job["percent"] = 100.0
+                job["message"] = "CFR training finished."
+                job["result"] = result
+                job["elapsed_seconds"] = result.get("elapsed_seconds", job["elapsed_seconds"])
+                job["estimated_remaining_seconds"] = 0.0
+                job["infosets"] = result.get("infosets", job["infosets"])
+        except Exception as exc:
+            with cfr_training_jobs_lock:
+                job = cfr_training_jobs.get(job_id)
+                if not job:
+                    return
+                job["status"] = "failed"
+                job["error"] = str(exc)
+                job["message"] = str(exc)
+
+    threading.Thread(target=worker, daemon=True).start()
+    with cfr_training_jobs_lock:
+        job = cfr_training_jobs[job_id]
+    return {
+        "job_id": job_id,
+        "status": job["status"],
+        "completed_iterations": job["completed_iterations"],
+        "total_iterations": job["total_iterations"],
+        "percent": job["percent"],
+        "message": job["message"],
+    }
+
+
+@app.get("/api/cfr-training-jobs/{job_id}")
+async def get_cfr_training_job(job_id: str) -> dict:
+    with cfr_training_jobs_lock:
+        job = cfr_training_jobs.get(job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found.")
         return job

@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-"""戦略表参照型 CPU が共通利用する infoset 分類補助です。"""
-
+#ランク文字を数値に変換（数値が大きいほど強い）
 RANKS = "23456789TJQKA"
 VALUES = {rank: index for index, rank in enumerate(RANKS, start=2)}
 
 
 def encode_infoset(game_state: dict, player_state: dict) -> str:
-    # infoset のキーをコンパクトにして、戦略表ファイルを重くしすぎず、
-    # それでも重要な局面差は残せるようにしています。
     phase = game_state["phase"]
     player_count = classify_table_participants(game_state)
     position = classify_position(game_state, player_state)
@@ -31,8 +28,6 @@ def collapse_infoset(infoset: str, index: int, replacement: str = "any") -> str:
 
 
 def candidate_infosets(infoset: str) -> list[str]:
-    # 戦略表は厳密一致から、より広い "any" バケットへ順にフォールバックし、
-    # 疎な自己対戦データでも判断できるようにします。
     candidates = []
     seen = set()
 
@@ -54,8 +49,6 @@ def candidate_infosets(infoset: str) -> list[str]:
 
 
 def classify_table_participants(game_state: dict) -> str:
-    # 戦略表には卓人数を埋め込みますが、game_state のトップレベルへは
-    # 専用キーを増やさず players 配列から直接数えます。
     contenders = [
         player
         for player in game_state["players"]
@@ -64,9 +57,6 @@ def classify_table_participants(game_state: dict) -> str:
     if len(contenders) >= 2:
         return f"{len(contenders)}p"
 
-    # オールインで stack=0 になった相手は、まだハンド内の参加者です。
-    # ここで stack>0 だけを見ると 1p の不自然な infoset が出るため、
-    # 最低でも 2 人局面として扱います。
     alive = [
         player
         for player in game_state["players"]
@@ -76,8 +66,6 @@ def classify_table_participants(game_state: dict) -> str:
 
 
 def classify_position(game_state: dict, player_state: dict) -> str:
-    # ポジション分類はあえて粗めです。卓人数が変わった場合やサンプル数が
-    # 少ない場合でも一般化しやすくするためです。
     total = len(game_state["players"])
     dealer = game_state["dealer_index"]
     seat = player_state["seat"]
@@ -98,8 +86,6 @@ def classify_position(game_state: dict, player_state: dict) -> str:
 
 
 def classify_pressure(game_state: dict, player_state: dict) -> str:
-    # pressure はスタックに対する危険度とポットオッズをまとめた分類で、
-    # 軽いベットと実質コミット局面を分けられるようにしています。
     to_call = max(0, game_state["current_bet"] - player_state["bet_round"])
     if to_call == 0:
         return "none"
@@ -175,8 +161,6 @@ def classify_postflop(hand: list[str], board: list[str]) -> str:
 
 
 def classify_board_texture(board: list[str]) -> str:
-    # ボードテクスチャはポストフロップだけで使い、多すぎる盤面形状を
-    # 少数カテゴリへ潰して戦略表の爆発を防ぎます。
     if len(board) < 3:
         return "na"
     suits = [card[1] for card in board]

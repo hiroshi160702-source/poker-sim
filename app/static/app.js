@@ -8,6 +8,8 @@ const configureTableUrl = "/api/configure-table";
 const cpuMultiMatchUrl = "/api/run-cpu-multiplayer";
 const cpuMultiStartUrl = "/api/start-cpu-multiplayer";
 const cpuMultiJobBaseUrl = "/api/cpu-multiplayer-jobs";
+const cfrTrainingStartUrl = "/api/start-cfr-training";
+const cfrTrainingJobBaseUrl = "/api/cfr-training-jobs";
 
 const seatIds = [0, 1, 2, 3, 4, 5, 6, 7, 8];
 let currentState = null;
@@ -29,6 +31,22 @@ let lastStrategyTable = null;
 let lastStrategyFilename = "strategy_table.json";
 let cpuMultiJobId = null;
 let cpuMultiJobPollHandle = null;
+let cfrJobId = null;
+let cfrJobPollHandle = null;
+
+function snapToStep(value, step = 25) {
+  const numericValue = Number(value);
+  const numericStep = Number(step);
+  if (!Number.isFinite(numericValue)) return 0;
+  if (!Number.isFinite(numericStep) || numericStep <= 0) return Math.round(numericValue);
+  return Math.round(numericValue / numericStep) * numericStep;
+}
+
+function clampSteppedValue(value, min, max, step = 25) {
+  const clamped = Math.max(min, Math.min(max, value));
+  if (clamped >= max) return max;
+  return Math.max(min, Math.min(max, snapToStep(clamped, step)));
+}
 
 function setUploadStatus(elementId, message, tone = "muted") {
   const node = document.getElementById(elementId);
@@ -202,6 +220,13 @@ function stopCpuMultiPolling() {
   }
 }
 
+function stopCfrPolling() {
+  if (cfrJobPollHandle) {
+    clearTimeout(cfrJobPollHandle);
+    cfrJobPollHandle = null;
+  }
+}
+
 function renderCpuMatchProgress(job = null) {
   const label = document.getElementById("cpu-multi-progress-label");
   const bar = document.getElementById("cpu-multi-progress-bar");
@@ -278,6 +303,35 @@ function renderCpuReplaySnapshot(snapshot) {
           )
           .join("")}
       </div>
+    </div>
+  `;
+}
+
+function renderCfrProgress(job = null) {
+  const label = document.getElementById("cfr-progress-label");
+  const bar = document.getElementById("cfr-progress-bar");
+  const status = document.getElementById("cfr-progress-status");
+  const preview = document.getElementById("cfr-progress-preview");
+
+  if (!job) {
+    label.textContent = "Idle";
+    bar.style.width = "0%";
+    status.textContent = "まだCFR学習は実行していません。";
+    preview.innerHTML = "";
+    return;
+  }
+
+  label.textContent = job.status || "Running";
+  bar.style.width = `${Math.max(0, Math.min(100, job.percent || 0))}%`;
+  const elapsed = formatDuration(job.elapsed_seconds);
+  const remaining = formatDuration(job.estimated_remaining_seconds);
+  status.textContent =
+    `${job.message || ""} ${job.completed_iterations || 0} / ${job.total_iterations || 0} iterations`
+    + ` | Elapsed ${elapsed}${remaining ? ` | ETA ${remaining}` : ""}`;
+  preview.innerHTML = `
+    <div class="list-card">
+      <strong>Infosets</strong>
+      <div>${job.infosets || 0}</div>
     </div>
   `;
 }
@@ -387,9 +441,10 @@ function renderActionButtons(state) {
   if (raiseLike) {
     amountInput.min = raiseLike.min_total;
     amountInput.max = raiseLike.max_total;
+    amountInput.step = 25;
     const currentValue = Number(amountInput.value);
     const nextValue = Number.isFinite(currentValue) && currentValue >= raiseLike.min_total && currentValue <= raiseLike.max_total
-      ? currentValue
+      ? clampSteppedValue(currentValue, raiseLike.min_total, raiseLike.max_total, 25)
       : raiseLike.min_total;
     amountInput.value = nextValue;
     lastRaiseBounds = { min: raiseLike.min_total, max: raiseLike.max_total };
@@ -412,7 +467,7 @@ function renderActionButtons(state) {
           if (!Number.isFinite(amount)) {
             amount = action.min_total;
           }
-          amount = Math.max(action.min_total, Math.min(action.max_total, amount));
+          amount = clampSteppedValue(amount, action.min_total, action.max_total, 25);
           payload.amount = amount;
           amountInput.value = amount;
         }
@@ -484,10 +539,13 @@ function renderHeroWinRate(state) {
 function renderCpuMatchResult(result) {
   if (!result) {
     document.getElementById("cpu-selfplay-summary").textContent = "結果はここに表示されます。";
+    document.getElementById("cfr-training-summary").textContent = "CFR学習結果はここに表示されます。";
     document.getElementById("download-strategy-btn").disabled = true;
     lastStrategyTable = null;
     document.getElementById("cpu-match-result").innerHTML = `<div class="list-card">No self-play run yet.</div>`;
+    document.getElementById("cfr-training-result").innerHTML = `<div class="list-card">No CFR training run yet.</div>`;
     renderCpuReplaySnapshot(null);
+    renderCfrProgress(null);
     return;
   }
   document.getElementById("cpu-selfplay-summary").textContent =
@@ -554,6 +612,44 @@ function renderCpuMatchResult(result) {
     ${leaderboard}
     ${seatStats}
     ${recent || `<div class="list-card">No recent result.</div>`}
+  `;
+}
+
+function renderCfrTrainingResult(result) {
+  if (!result) {
+    document.getElementById("cfr-training-summary").textContent = "CFR学習結果はここに表示されます。";
+    document.getElementById("cfr-training-result").innerHTML = `<div class="list-card">No CFR training run yet.</div>`;
+    return;
+  }
+  document.getElementById("cfr-training-summary").textContent =
+    `${result.iterations} iterations のCFR学習が完了しました。出力先と生成戦略表を下に表示しています。`;
+  lastStrategyTable = result.strategy_table || null;
+  lastStrategyFilename = result.strategy_table_filename || "strategy_table.json";
+  document.getElementById("download-strategy-btn").disabled = !lastStrategyTable;
+  renderCfrProgress({
+    status: "completed",
+    completed_iterations: result.iterations,
+    total_iterations: result.iterations,
+    percent: 100,
+    message: "CFR training finished.",
+    infosets: result.infosets,
+    elapsed_seconds: result.elapsed_seconds,
+    estimated_remaining_seconds: 0,
+  });
+  document.getElementById("cfr-training-result").innerHTML = `
+    <div class="list-card">
+      <strong>CFR Training Result</strong>
+      <div>Iterations ${result.iterations}</div>
+      <div>Infosets ${result.infosets}</div>
+      <div>Visit entries ${result.visit_entries}</div>
+      <div>Min visits ${result.min_visits}</div>
+      <div>Smoothing alpha ${result.smoothing_alpha}</div>
+      <div>Base table ${result.base_table || "None"}</div>
+      <div>Elapsed ${formatDuration(result.elapsed_seconds)}</div>
+      <div>Output ${result.output}</div>
+      <div>Visits ${result.visits_output}</div>
+      ${lastStrategyTable ? "<div>Strategy table is ready to download.</div>" : ""}
+    </div>
   `;
 }
 
@@ -864,6 +960,38 @@ async function pollCpuMultiJob(jobId) {
   }
 }
 
+async function pollCfrJob(jobId) {
+  try {
+    const job = await apiFetch(`${cfrTrainingJobBaseUrl}/${jobId}`);
+    renderCfrProgress(job);
+
+    if (job.status === "completed") {
+      stopCfrPolling();
+      cfrJobId = null;
+      document.getElementById("run-cfr-btn").disabled = false;
+      renderCfrTrainingResult(job.result);
+      return;
+    }
+
+    if (job.status === "failed") {
+      stopCfrPolling();
+      cfrJobId = null;
+      document.getElementById("run-cfr-btn").disabled = false;
+      document.getElementById("cfr-training-summary").textContent = `CFR学習失敗: ${job.error || job.message}`;
+      alert(job.error || job.message || "CFR training failed.");
+      return;
+    }
+
+    cfrJobPollHandle = setTimeout(() => pollCfrJob(jobId), 1000);
+  } catch (error) {
+    stopCfrPolling();
+    cfrJobId = null;
+    document.getElementById("run-cfr-btn").disabled = false;
+    document.getElementById("cfr-training-summary").textContent = `進捗取得失敗: ${error.message}`;
+    alert(error.message);
+  }
+}
+
 document.getElementById("run-cpu-multi-btn").addEventListener("click", async () => {
   if (requestInFlight || cpuMultiJobId) return;
   try {
@@ -944,6 +1072,59 @@ document.getElementById("run-cpu-multi-btn").addEventListener("click", async () 
   }
 });
 
+document.getElementById("run-cfr-btn").addEventListener("click", async () => {
+  if (requestInFlight || cfrJobId) return;
+  try {
+    const iterations = Number(document.getElementById("cfr-iterations").value);
+    const outPath = document.getElementById("cfr-output").value.trim();
+    const baseTablePath = document.getElementById("cfr-base-table").value.trim();
+    const minVisits = Number(document.getElementById("cfr-min-visits").value);
+    const smoothingAlpha = Number(document.getElementById("cfr-smoothing-alpha").value);
+
+    if (!outPath) {
+      throw new Error("Output JSON path is required.");
+    }
+    if (iterations < 1) {
+      throw new Error("Iterations must be at least 1.");
+    }
+
+    document.getElementById("run-cfr-btn").disabled = true;
+    document.getElementById("cfr-training-summary").textContent = "CFR学習を開始します。";
+    renderCfrProgress({
+      status: "queued",
+      completed_iterations: 0,
+      total_iterations: iterations,
+      percent: 0,
+      message: "CFR training is starting.",
+      infosets: 0,
+      elapsed_seconds: 0,
+      estimated_remaining_seconds: null,
+    });
+    lastStrategyTable = null;
+    document.getElementById("download-strategy-btn").disabled = true;
+
+    const job = await apiFetch(cfrTrainingStartUrl, {
+      method: "POST",
+      body: JSON.stringify({
+        iterations,
+        starting_stack: Number(document.getElementById("starting-stack").value),
+        out_path: outPath,
+        base_table_path: baseTablePath || null,
+        min_visits: minVisits,
+        smoothing_alpha: smoothingAlpha,
+        progress_every: 1000,
+      }),
+    });
+
+    cfrJobId = job.job_id;
+    pollCfrJob(job.job_id);
+  } catch (error) {
+    document.getElementById("run-cfr-btn").disabled = false;
+    document.getElementById("cfr-training-summary").textContent = `CFR学習開始失敗: ${error.message}`;
+    alert(error.message);
+  }
+});
+
 document.getElementById("add-cpu-slot-btn").addEventListener("click", () => {
   setFreezeCpuPanels(true);
   const nextId = cpuMultiSlots.length ? Math.max(...cpuMultiSlots.map((slot) => slot.id)) + 1 : 1;
@@ -968,6 +1149,8 @@ document.getElementById("download-strategy-btn").addEventListener("click", downl
 
 renderCpuMatchProgress(null);
 renderCpuReplaySnapshot(null);
+renderCfrProgress(null);
 setCpuMultiRunning(false);
+document.getElementById("run-cfr-btn").disabled = false;
 refreshState();
 setInterval(refreshState, 6000);

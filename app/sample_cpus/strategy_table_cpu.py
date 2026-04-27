@@ -7,16 +7,11 @@ import random
 from functools import lru_cache
 from pathlib import Path
 
-import app as app_package
 from app.strategy_tables.lib import candidate_infosets, encode_infoset
 from app.strategy_tables.preflop_blueprint import blend_with_blueprint
 
-PACKAGE_ROOT = Path(app_package.__file__).resolve().parent
 DEFAULT_TABLE_CANDIDATES = [
-    Path(__file__).resolve().parent / "strategy_tables" / "multiplayer_strategy_6p_5000000hands.json",
-    PACKAGE_ROOT / "sample_cpus" / "strategy_tables" / "multiway_3p_100000.json",
-    PACKAGE_ROOT / "sample_cpus" / "strategy_tables" / "table_builder_expanded_200000.json",
-    PACKAGE_ROOT / "sample_cpus" / "strategy_tables" / "example_gto.json",
+    Path(__file__).resolve().parent / "strategy_tables" / "tournament_blueprint_heads_up_cfr_10000000.json",
 ]
 
 

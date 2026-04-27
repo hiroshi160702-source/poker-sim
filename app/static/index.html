@@ -11,7 +11,7 @@
       href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;700&display=swap"
       rel="stylesheet"
     />
-    <link rel="stylesheet" href="/static/styles.css?v=20260417-collapse-refresh-1" />
+    <link rel="stylesheet" href="/static/styles.css?v=20260421-cfr-ui-1" />
   </head>
   <body>
     <div class="app-shell">
@@ -87,7 +87,7 @@
             <div class="setup-grid">
               <div class="amount-controls">
                 <label for="starting-stack">Starting Stack</label>
-                <input id="starting-stack" type="number" min="500" max="50000" step="100" />
+                <input id="starting-stack" type="number" min="500" max="50000" step="25" />
               </div>
               <div class="amount-controls">
                 <label for="cpu-count">CPU Players</label>
@@ -163,6 +163,43 @@
               <div id="cpu-multi-progress-status" class="panel-note">まだ自己対戦は実行していません。</div>
               <div id="cpu-multi-progress-preview" class="history-list compact-list"></div>
             </div>
+
+            <div class="selfplay-progress-card">
+              <div class="selfplay-progress-header">
+                <strong>CFR Trainer</strong>
+                <span id="cfr-progress-label" class="pill">Idle</span>
+              </div>
+              <div class="setup-grid">
+                <div class="amount-controls">
+                  <label for="cfr-iterations">Iterations</label>
+                  <input id="cfr-iterations" type="number" min="1" step="1000" value="20000" />
+                </div>
+                <div class="amount-controls">
+                  <label for="cfr-output">Output JSON</label>
+                  <input id="cfr-output" type="text" placeholder="/Users/.../tournament_blueprint_heads_up_cfr_new.json" />
+                </div>
+                <div class="amount-controls">
+                  <label for="cfr-base-table">Base Table</label>
+                  <input id="cfr-base-table" type="text" placeholder="/Users/.../tournament_blueprint_heads_up_cfr_blended.json" />
+                </div>
+                <div class="amount-controls">
+                  <label for="cfr-min-visits">Min Visits</label>
+                  <input id="cfr-min-visits" type="number" min="1" step="1" value="25" />
+                </div>
+                <div class="amount-controls">
+                  <label for="cfr-smoothing-alpha">Smoothing Alpha</label>
+                  <input id="cfr-smoothing-alpha" type="number" min="0" step="0.5" value="6" />
+                </div>
+              </div>
+              <div class="button-row">
+                <button id="run-cfr-btn" class="primary-btn">Run CFR Training</button>
+              </div>
+              <div class="progress-track">
+                <div id="cfr-progress-bar" class="progress-fill"></div>
+              </div>
+              <div id="cfr-progress-status" class="panel-note">まだCFR学習は実行していません。</div>
+              <div id="cfr-progress-preview" class="history-list compact-list"></div>
+            </div>
           </div>
         </details>
       </aside>
@@ -201,6 +238,7 @@
           </summary>
           <div class="collapsible-body">
             <div id="cpu-selfplay-summary" class="panel-note">結果はここに表示されます。</div>
+            <div id="cfr-training-summary" class="panel-note">CFR学習結果はここに表示されます。</div>
             <div id="cpu-multi-live-replay" class="hero-win-rate-card">
               <div class="panel-note">ライブ再生はここに表示されます。</div>
             </div>
@@ -208,11 +246,12 @@
               <button id="download-strategy-btn" class="ghost-btn" disabled>Download Strategy Table</button>
             </div>
             <div id="cpu-match-result" class="history-list"></div>
+            <div id="cfr-training-result" class="history-list"></div>
           </div>
         </details>
       </aside>
     </div>
 
-    <script src="/static/app.js?v=20260417-collapse-refresh-1" defer></script>
+    <script src="/static/app.js?v=20260422-chip-step-1" defer></script>
   </body>
 </html>

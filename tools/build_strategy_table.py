@@ -20,7 +20,7 @@ def main() -> None:
     parser.add_argument("--hero", required=True, help="Python file for hero CPU")
     parser.add_argument("--villain", required=True, help="Python file for villain CPU")
     parser.add_argument("--hands", type=int, default=500, help="Number of heads-up hands")
-    parser.add_argument("--stack", type=int, default=2000, help="Starting stack")
+    parser.add_argument("--stack", type=int, default=5000, help="Starting stack")
     parser.add_argument("--out", required=True, help="Output JSON path")
     args = parser.parse_args()
 

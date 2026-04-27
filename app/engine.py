@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import itertools
 import json
+import math
 import random
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -11,6 +12,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 from .cpu_loader import CpuAgentError, CpuLoader
+from .strategy_tables.preflop_blueprint import validate_stack_with_sb_unit
 
 RANK_ORDER = "23456789TJQKA"
 RANK_VALUES = {rank: index + 2 for index, rank in enumerate(RANK_ORDER)}
@@ -203,7 +205,7 @@ class HoldemGame:
         self.cpu_loader = CpuLoader()
         self.small_blind = 25
         self.big_blind = 50
-        self.starting_stack = 2000
+        self.starting_stack = 5000
         self.cpu_count = 5
         self.players = self._build_default_players()
         self.hand_id = 0
@@ -229,6 +231,18 @@ class HoldemGame:
         self._win_rate_dirty = True
         self.autoplay_cpus_enabled = True
 
+    @property
+    def chip_unit(self) -> int:
+        return self.small_blind
+
+    def round_to_chip_unit(self, amount: int | float) -> int:
+        unit = max(1, self.chip_unit)
+        return int(round(float(amount) / unit) * unit)
+
+    def ceil_to_chip_unit(self, amount: int | float) -> int:
+        unit = max(1, self.chip_unit)
+        return int(math.ceil(float(amount) / unit) * unit)
+
     def _build_default_players(self) -> List[PlayerState]:
         # 0 番席は人間用です。それ以外は最初から同梱 CPU を割り当てて、
         # 初期状態でもすぐ遊べるようにしています。
@@ -250,6 +264,11 @@ class HoldemGame:
             raise ValueError("Starting stack must be between 500 and 50000.")
         if not 1 <= cpu_count <= 8:
             raise ValueError("CPU count must be between 1 and 8.")
+        
+        # スタック値がSB単位（0.5BB）であることをチェック
+        is_valid, error_msg = validate_stack_with_sb_unit(starting_stack, self.big_blind)
+        if not is_valid:
+            raise ValueError(error_msg)
 
         self.starting_stack = starting_stack
         self.cpu_count = cpu_count
@@ -479,7 +498,7 @@ class HoldemGame:
         total_max = player.bet_round + player.stack
         if player.stack > to_call and total_max > self.current_bet:
             if self.current_bet == 0:
-                min_total = min(total_max, self.big_blind)
+                min_total = min(total_max, self.ceil_to_chip_unit(self.big_blind))
                 actions.append(
                     {
                         "type": "bet",
@@ -489,7 +508,7 @@ class HoldemGame:
                     }
                 )
             else:
-                min_total = min(total_max, self.current_bet + self.last_raise_size)
+                min_total = min(total_max, self.ceil_to_chip_unit(self.current_bet + self.last_raise_size))
                 if total_max > self.current_bet:
                     actions.append(
                         {
@@ -594,10 +613,14 @@ class HoldemGame:
             return total_max
 
         target_total = max(min_total, min(total_max, amount))
+        if target_total < total_max:
+            target_total = max(min_total, self.round_to_chip_unit(target_total))
+        if target_total > total_max:
+            target_total = total_max
         return target_total
 
     def commit_chips(self, player: PlayerState, amount: int) -> None:
-        committed = min(player.stack, max(0, amount))
+        committed = min(player.stack, max(0, int(amount)))
         player.stack -= committed
         player.bet_round += committed
         player.total_bet += committed
@@ -760,15 +783,23 @@ class HoldemGame:
             if eligible:
                 best_rank = max(rankings[seat][0] for seat in eligible)
                 winners = [seat for seat in eligible if rankings[seat][0] == best_rank]
-                share = pot_amount // len(winners)
-                remainder = pot_amount % len(winners)
+                unit = max(1, self.chip_unit)
+                unit_count = pot_amount // unit
+                loose_chips = pot_amount % unit
+                share = (unit_count // len(winners)) * unit
+                remainder_units = unit_count % len(winners)
                 ordered = self.seats_in_order_from(self.dealer_index + 1)
                 for seat in winners:
                     payouts[seat] = payouts.get(seat, 0) + share
                 for seat in ordered:
-                    if seat in winners and remainder > 0:
-                        payouts[seat] += 1
-                        remainder -= 1
+                    if seat in winners and remainder_units > 0:
+                        payouts[seat] += unit
+                        remainder_units -= 1
+                if loose_chips:
+                    for seat in ordered:
+                        if seat in winners:
+                            payouts[seat] += loose_chips
+                            break
             previous = level
         return payouts
 

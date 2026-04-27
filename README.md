@@ -126,7 +126,8 @@ python3 tools/build_strategy_table.py \
   --out app/sample_cpus/strategy_tables/generated_from_selfplay.json
 ```
 
-生成済みのサンプル表は [app/sample_cpus/strategy_tables](app/sample_cpus/strategy_tables) にあります。
+生成済みのサンプル表は [app/sample_cpus/strategy_tables](app/sample_cpus/strategy_tables) にあります。  
+直下には本番寄りの表を置き、`smoke/`, `visits/`, `archive/` に補助出力や試作を分けています。
 
 Monte Carlo CFR 近似でヘッズアップ用の戦略表を作るには次も使えます。
 
@@ -135,6 +136,18 @@ python3 tools/strategy.py \
   --iterations 5000 \
   --out app/sample_cpus/strategy_tables/cfr_generated.json
 ```
+
+6-max などのマルチプレイヤー向けに、プリフロップ専用の近似 MCCFR で戦略表を作るには次も使えます。
+
+```bash
+python3 tools/strategy_preflop_multiway.py \
+  --players 6 \
+  --iterations 5000 \
+  --min-visits 25 \
+  --out app/sample_cpus/strategy_tables/preflop_6max_mccfr.json
+```
+
+この出力はプリフロップ専用です。ポストフロップは既存テーブルやヒューリスティックにフォールバックさせる前提です。
 
 ## Project Structure
 
