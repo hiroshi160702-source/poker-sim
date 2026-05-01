@@ -11,6 +11,7 @@ from app.strategy_tables.lib import candidate_infosets, encode_infoset
 from app.strategy_tables.preflop_blueprint import blend_with_blueprint
 
 DEFAULT_TABLE_CANDIDATES = [
+    Path(__file__).resolve().parent / "strategy_tables" / "mllui_player_preflop_mccfr_6p_500000.json",
     Path(__file__).resolve().parent / "strategy_tables" / "tournament_blueprint_heads_up_cfr_10000000.json",
 ]
 
@@ -31,7 +32,7 @@ def decide_action(game_state, player_state, legal_actions):
     )
     strategy = apply_safety_overrides(strategy, infoset, legal_actions)
     action_type = sample_action(strategy)
-    return materialize_action(action_type, legal_actions, infoset)
+    return materialize_action(action_type, legal_actions, infoset, game_state, player_state)
 
 
 @lru_cache(maxsize=4)
@@ -149,14 +150,14 @@ def sample_action(strategy):
     return items[-1][0]
 
 
-def materialize_action(action_type, legal_actions, infoset):
+def materialize_action(action_type, legal_actions, infoset, game_state=None, player_state=None):
     for action in legal_actions:
         if action["type"] != action_type:
             continue
 
         payload = {"type": action_type}
         if action_type in {"bet", "raise"}:
-            payload["amount"] = choose_size(action, infoset)
+            payload["amount"] = choose_size(action, infoset, game_state, player_state)
         elif "amount" in action:
             payload["amount"] = action["amount"]
         return payload
@@ -165,38 +166,107 @@ def materialize_action(action_type, legal_actions, infoset):
     return {"type": first["type"], "amount": first.get("amount")}
 
 
-def choose_size(action, infoset):
-    # 戦略表には行動確率しかないため、ベットサイズは同じ infoset を使って
-    # ヒューリスティックに決めています。
+def choose_size(action, infoset, game_state=None, player_state=None):
+    # 戦略表には行動確率しかないため、ベット/レイズ額は局面と手札強度から
+    # 明示的な候補サイズを重み付きで選びます。
     min_total = action["min_total"]
     max_total = action["max_total"]
     if max_total <= min_total:
         return max_total
 
-    phase, _player_count, _position, bucket, pressure, stack_bucket, _texture = infoset.split("|")
-    span = max_total - min_total
-    if phase == "preflop":
-        if bucket in {"premium", "strong"}:
-            factor = 0.48 if pressure == "none" else 0.36
-        elif bucket == "speculative":
-            factor = 0.22
-        else:
-            factor = 0.15
+    phase, _player_count, _position, bucket, _pressure, _stack_bucket, _texture = infoset.split("|")
+    action_type = action["type"]
+    target_total = choose_bet_target_total(action_type, phase, bucket, game_state, player_state)
+    return max(min_total, min(max_total, int(target_total)))
+
+
+def choose_bet_target_total(action_type, phase, bucket, game_state, player_state):
+    if phase == "preflop" and (action_type == "bet" or is_preflop_open_raise(game_state)):
+        big_blind = numeric_state_value(game_state, "big_blind", 10)
+        multiplier = weighted_choice(
+            [4.0, 3.0, 2.5],
+            size_weights(bucket, ["large", "medium", "small"], preflop=True),
+        )
+        return big_blind * multiplier
+
+    if action_type == "bet":
+        pot = effective_pot(game_state)
+        multiplier = weighted_choice(
+            [1.0, 1.5, 2.0],
+            size_weights(bucket, ["small", "medium", "large"]),
+        )
+        return player_round_bet(player_state) + pot * multiplier
+
+    pot_after_call = effective_pot(game_state) + amount_to_call(game_state, player_state)
+    multiplier = weighted_choice(
+        [0.5, 1.0, 1.5],
+        size_weights(bucket, ["small", "medium", "large"]),
+    )
+    return player_round_bet(player_state) + amount_to_call(game_state, player_state) + pot_after_call * multiplier
+
+
+def size_weights(bucket, labels, preflop=False):
+    strength = hand_strength_class(bucket, preflop)
+    if strength == "strong":
+        profile = {"small": 0.18, "medium": 0.32, "large": 0.50}
+    elif strength == "medium":
+        profile = {"small": 0.35, "medium": 0.45, "large": 0.20}
     else:
-        if bucket == "monster":
-            factor = 0.68
-        elif bucket == "made":
-            factor = 0.55
-        elif bucket in {"draw", "combo_draw"}:
-            factor = 0.32
-        elif bucket == "strong_pair":
-            factor = 0.26
-        else:
-            factor = 0.18
+        profile = {"small": 0.60, "medium": 0.30, "large": 0.10}
+    return [profile[label] for label in labels]
 
-    if stack_bucket == "shallow":
-        factor = min(0.82, factor + 0.14)
-    elif stack_bucket == "very_deep":
-        factor = max(0.12, factor - 0.05)
 
-    return max(min_total, min(max_total, min_total + int(span * factor)))
+def hand_strength_class(bucket, preflop=False):
+    if preflop:
+        if bucket in {"premium", "strong"}:
+            return "strong"
+        if bucket in {"medium", "speculative"}:
+            return "medium"
+        return "weak"
+
+    if bucket in {"monster", "made"}:
+        return "strong"
+    if bucket in {"strong_pair", "medium", "draw", "combo_draw"}:
+        return "medium"
+    return "weak"
+
+
+def weighted_choice(values, weights):
+    total = sum(weights)
+    if total <= 0:
+        return values[-1]
+    threshold = random.random() * total
+    cumulative = 0.0
+    for value, weight in zip(values, weights):
+        cumulative += weight
+        if threshold <= cumulative:
+            return value
+    return values[-1]
+
+
+def numeric_state_value(state, key, default):
+    if not state:
+        return default
+    try:
+        return float(state.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+def effective_pot(game_state):
+    return max(1.0, numeric_state_value(game_state, "pot", 1))
+
+
+def player_round_bet(player_state):
+    return numeric_state_value(player_state, "bet_round", 0)
+
+
+def amount_to_call(game_state, player_state):
+    current_bet = numeric_state_value(game_state, "current_bet", 0)
+    return max(0.0, current_bet - player_round_bet(player_state))
+
+
+def is_preflop_open_raise(game_state):
+    current_bet = numeric_state_value(game_state, "current_bet", 0)
+    big_blind = numeric_state_value(game_state, "big_blind", 10)
+    return current_bet <= big_blind
