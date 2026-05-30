@@ -39,14 +39,14 @@ CPU_NAME_POOL = [
     "CPU NorthWest",
 ]
 CPU_TEMPLATE_POOL = [
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
-    "strategy_table_cpu.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
+    "multiway_blueprint_agent.py",
 ]
 
 
@@ -219,6 +219,7 @@ class HoldemGame:
         self.min_raise_to = self.big_blind
         self.pot = 0
         self.pending_to_act: set[int] = set()
+        self.raise_right_seats: set[int] = set()
         self.log_lines: List[str] = []
         self.history: List[dict] = []
         self.last_winners: List[dict] = []
@@ -290,6 +291,7 @@ class HoldemGame:
         self.min_raise_to = self.big_blind
         self.pot = 0
         self.pending_to_act = set()
+        self.raise_right_seats = set()
         self.log_lines = []
         self.history = []
         self.last_winners = []
@@ -341,40 +343,24 @@ class HoldemGame:
         return None
 
     def determine_button_and_blinds(self, eligible: List[int]) -> Tuple[int, int, int]:
-        # BB を誰が払うかを最優先で進めると、「次に自分へ BB が来るはずなのに
-        # 飛ばされた」という不自然さが起きにくくなります。
-        if self.big_blind_seat is None:
-            dealer_start = self.dealer_index if self.dealer_index >= 0 else eligible[-1]
-            dealer_seat = self.next_occupied_seat(dealer_start)
-            if dealer_seat is None:
-                dealer_seat = eligible[0]
-            if len(eligible) == 2:
-                small_blind_seat = dealer_seat
-                big_blind_seat = next(seat for seat in eligible if seat != dealer_seat)
-                return dealer_seat, small_blind_seat, big_blind_seat
-
-            small_blind_seat = self.next_occupied_seat(dealer_seat)
-            if small_blind_seat is None:
-                small_blind_seat = dealer_seat
-            big_blind_seat = self.next_occupied_seat(small_blind_seat)
-            if big_blind_seat is None:
-                big_blind_seat = small_blind_seat
-            return dealer_seat, small_blind_seat, big_blind_seat
-
-        big_blind_seat = self.next_occupied_seat(self.big_blind_seat)
-        if big_blind_seat is None:
-            big_blind_seat = eligible[0]
-        if len(eligible) == 2:
-            dealer_seat = next(seat for seat in eligible if seat != big_blind_seat)
-            small_blind_seat = dealer_seat
-            return dealer_seat, small_blind_seat, big_blind_seat
-
-        small_blind_seat = self.previous_occupied_seat(big_blind_seat)
-        if small_blind_seat is None:
-            small_blind_seat = big_blind_seat
-        dealer_seat = self.previous_occupied_seat(small_blind_seat)
+        # ボタンを1席ずつ進め、その行動順の先に SB、さらに先に BB を置きます。
+        # 画面上でも手番上でも D -> SB -> BB が同じ向きに並ぶようにします。
+        dealer_start = self.dealer_index if self.dealer_index >= 0 else eligible[-1]
+        dealer_seat = self.next_occupied_seat(dealer_start)
         if dealer_seat is None:
-            dealer_seat = small_blind_seat
+            dealer_seat = eligible[0]
+
+        if len(eligible) == 2:
+            small_blind_seat = dealer_seat
+            big_blind_seat = next(seat for seat in eligible if seat != dealer_seat)
+            return dealer_seat, small_blind_seat, big_blind_seat
+
+        small_blind_seat = self.next_occupied_seat(dealer_seat)
+        if small_blind_seat is None:
+            small_blind_seat = dealer_seat
+        big_blind_seat = self.next_occupied_seat(small_blind_seat)
+        if big_blind_seat is None:
+            big_blind_seat = small_blind_seat
         return dealer_seat, small_blind_seat, big_blind_seat
 
     def deal_order_start_seat(self, eligible: List[int]) -> int:
@@ -386,9 +372,23 @@ class HoldemGame:
     def next_eligible_actor(self, start_seat: int) -> Optional[int]:
         for seat in self.seats_in_order_from(start_seat + 1):
             player = self.players[seat]
-            if player.in_hand and not player.folded and not player.all_in:
+            if (
+                seat in self.pending_to_act
+                and player.in_hand
+                and not player.folded
+                and not player.all_in
+            ):
                 return seat
         return None
+
+    def reset_street_action_labels(self) -> None:
+        for player in self.players:
+            if player.folded or not player.in_hand:
+                player.last_action = "Out"
+            elif player.all_in:
+                player.last_action = "All-in"
+            else:
+                player.last_action = "Waiting"
 
     def start_new_hand(self, autoplay_cpus: bool = True) -> None:
         # ハンド開始時に卓状態を初期化し、ディーラー移動、配札、ブラインド徴収、
@@ -412,6 +412,7 @@ class HoldemGame:
         self.min_raise_to = self.big_blind
         self.pot = 0
         self.pending_to_act = set()
+        self.raise_right_seats = set()
         self.last_winners = []
         self.awaiting_new_hand = False
         self.autoplay_cpus_enabled = autoplay_cpus
@@ -444,6 +445,7 @@ class HoldemGame:
             for player in self.players
             if player.in_hand and not player.folded and not player.all_in
         }
+        self.raise_right_seats = set(self.pending_to_act)
         self.current_turn = self.next_eligible_actor(big_blind_seat)
         self.add_log(
             f"PREFLOP | Table | Hand #{self.hand_id} start / Dealer {self.players[self.dealer_index].name} / "
@@ -471,9 +473,12 @@ class HoldemGame:
             return []
         if not player.in_hand or player.folded or player.all_in:
             return []
+        if seat not in self.pending_to_act:
+            return []
 
         to_call = max(0, self.current_bet - player.bet_round)
         actions: List[dict] = []
+        can_raise = seat in self.raise_right_seats
 
         if to_call > 0:
             actions.append({"type": "fold", "label": "Fold"})
@@ -484,7 +489,7 @@ class HoldemGame:
                     "amount": min(to_call, player.stack),
                 }
             )
-            if player.stack > 0:
+            if player.stack > 0 and (can_raise or player.stack <= to_call):
                 actions.append(
                     {"type": "all-in", "label": f"All-in {player.stack}", "amount": player.stack}
                 )
@@ -496,30 +501,71 @@ class HoldemGame:
                 )
 
         total_max = player.bet_round + player.stack
-        if player.stack > to_call and total_max > self.current_bet:
+        if can_raise and player.stack > to_call and total_max > self.current_bet:
             if self.current_bet == 0:
                 min_total = min(total_max, self.ceil_to_chip_unit(self.big_blind))
+                abstract_sizes = self.abstract_bet_sizes(player, "bet", min_total, total_max)
                 actions.append(
                     {
                         "type": "bet",
                         "label": f"Bet {min_total}+",
                         "min_total": min_total,
                         "max_total": total_max,
+                        "abstract_sizes": abstract_sizes,
                     }
                 )
             else:
                 min_total = min(total_max, self.ceil_to_chip_unit(self.current_bet + self.last_raise_size))
                 if total_max > self.current_bet:
+                    abstract_sizes = self.abstract_bet_sizes(player, "raise", min_total, total_max)
                     actions.append(
                         {
                             "type": "raise",
                             "label": f"Raise to {min_total}+",
                             "min_total": min_total,
                             "max_total": total_max,
+                            "abstract_sizes": abstract_sizes,
                         }
                     )
-
         return actions
+
+    def abstract_bet_sizes(
+        self, player: PlayerState, action_type: str, min_total: int, max_total: int
+    ) -> List[dict]:
+        # Pluribus 風の抽象化では任意額を直接探索せず、代表的なポット比率へ丸めます。
+        # エンジンは従来通り任意額も受け付けるため、UI と既存 CPU の互換性は保ちます。
+        to_call = max(0, self.current_bet - player.bet_round)
+        if action_type == "bet":
+            base_total = player.bet_round
+            sizing_pot = max(self.big_blind, self.pot)
+        else:
+            base_total = player.bet_round + to_call
+            sizing_pot = max(self.big_blind, self.pot + to_call)
+
+        candidates = [
+            ("small", "Small 1/3 pot", base_total + sizing_pot / 3),
+            ("medium", "Medium 1/2 pot", base_total + sizing_pot / 2),
+            ("large", "Large 1 pot", base_total + sizing_pot),
+        ]
+
+        sizes: List[dict] = []
+        seen_totals: set[int] = set()
+        for name, label, raw_total in candidates:
+            total = self.round_to_chip_unit(raw_total)
+            total = max(min_total, min(max_total, total))
+            if total in seen_totals:
+                continue
+            seen_totals.add(total)
+            sizes.append(
+                {
+                    "name": name,
+                    "label": label,
+                    "total": total,
+                    "amount": max(0, total - player.bet_round),
+                    "pot_fraction": 1.0 if name == "large" else 0.5 if name == "medium" else 1 / 3,
+                }
+            )
+        return sizes
 
     def apply_player_action(self, seat: int, action_type: str, amount: Optional[int] = None) -> None:
         # 人間も CPU も全行動をここへ通し、チップ計算、ログ、手番遷移、
@@ -541,46 +587,65 @@ class HoldemGame:
             player.in_hand = False
             player.last_action = "Fold"
             self.pending_to_act.discard(seat)
+            self.raise_right_seats.discard(seat)
         elif action_type == "check":
             player.last_action = "Check"
             self.pending_to_act.discard(seat)
+            self.raise_right_seats.discard(seat)
         elif action_type == "call":
             action_amount = min(to_call, player.stack)
             self.commit_chips(player, action_amount)
             player.last_action = describe_action("call", action_amount)
             self.pending_to_act.discard(seat)
+            self.raise_right_seats.discard(seat)
         elif action_type == "bet":
             target_total = self.normalize_target_total(player, amount, opening=True)
             action_amount = target_total - player.bet_round
+            previous_bet = self.current_bet
             self.commit_chips(player, action_amount)
             self.current_bet = player.bet_round
-            self.last_raise_size = max(self.big_blind, self.current_bet)
+            full_raise = self.current_bet - previous_bet >= self.big_blind
+            if full_raise:
+                self.last_raise_size = max(self.big_blind, self.current_bet - previous_bet)
             self.min_raise_to = self.current_bet + self.last_raise_size
             player.last_action = describe_action("bet", player.bet_round)
-            reset_pending = True
+            reset_pending = full_raise
+            self.pending_to_act.discard(seat)
+            self.raise_right_seats.discard(seat)
         elif action_type == "raise":
             target_total = self.normalize_target_total(player, amount, opening=False)
             action_amount = target_total - player.bet_round
             previous_bet = self.current_bet
             self.commit_chips(player, action_amount)
             self.current_bet = player.bet_round
-            self.last_raise_size = max(self.big_blind, self.current_bet - previous_bet)
-            self.min_raise_to = self.current_bet + self.last_raise_size
+            raise_size = self.current_bet - previous_bet
+            full_raise = raise_size >= self.last_raise_size
+            if full_raise:
+                self.last_raise_size = max(self.big_blind, raise_size)
+                self.min_raise_to = self.current_bet + self.last_raise_size
             player.last_action = describe_action("raise", player.bet_round)
-            reset_pending = True
+            reset_pending = full_raise
+            self.pending_to_act.discard(seat)
+            self.raise_right_seats.discard(seat)
         elif action_type == "all-in":
             action_amount = player.stack
             previous_bet = self.current_bet
             self.commit_chips(player, action_amount)
             if player.bet_round > self.current_bet:
                 self.current_bet = player.bet_round
-                self.last_raise_size = max(self.big_blind, self.current_bet - previous_bet)
+                raise_size = self.current_bet - previous_bet
+                full_raise = raise_size >= self.last_raise_size
+                if full_raise:
+                    self.last_raise_size = max(self.big_blind, raise_size)
                 self.min_raise_to = self.current_bet + self.last_raise_size
                 player.last_action = describe_action("all-in", player.bet_round)
-                reset_pending = True
+                reset_pending = full_raise
+                self.pending_to_act.discard(seat)
+                self.raise_right_seats.discard(seat)
             else:
                 player.last_action = describe_action("all-in", action_amount)
                 self.pending_to_act.discard(seat)
+                self.raise_right_seats.discard(seat)
         else:
             raise ValueError(f"Unsupported action: {action_type}")
 
@@ -596,8 +661,22 @@ class HoldemGame:
                 for contender in self.players
                 if contender.in_hand and not contender.folded and not contender.all_in and contender.seat != seat
             }
+            self.raise_right_seats = set(self.pending_to_act)
+        else:
+            self.add_call_obligations(seat)
 
         self.resolve_after_action(seat)
+
+    def add_call_obligations(self, acting_seat: int) -> None:
+        for contender in self.players:
+            if (
+                contender.seat != acting_seat
+                and contender.in_hand
+                and not contender.folded
+                and not contender.all_in
+                and contender.bet_round < self.current_bet
+            ):
+                self.pending_to_act.add(contender.seat)
 
     def normalize_target_total(self, player: PlayerState, amount: Optional[int], opening: bool) -> int:
         total_max = player.bet_round + player.stack
@@ -671,9 +750,11 @@ class HoldemGame:
 
         self.phase = phase_sequence[current_index + 1]
         self.deal_board_cards()
+        self.reset_street_action_labels()
         self.pending_to_act = {
             player.seat for player in active if not player.all_in and not player.folded
         }
+        self.raise_right_seats = set(self.pending_to_act)
         next_turn = self.next_eligible_actor(self.dealer_index)
         self.current_turn = next_turn if next_turn is not None else next(iter(self.pending_to_act))
         self.add_log(f"{self.phase_label()} | Board | {' '.join(self.community_cards)}")
@@ -813,24 +894,31 @@ class HoldemGame:
             and safety < 100
         ):
             safety += 1
-            seat = self.current_turn
-            player = self.players[seat]
-            legal_actions = self.legal_actions_for(seat)
-            try:
-                decision = self.cpu_decision_for(player, legal_actions)
-            except CpuAgentError as exc:
-                player.cpu_error = str(exc)
-                self.add_log(f"{self.phase_label()} | {player.name} | CPU error / fallback to check-fold")
-                decision = self.fallback_decision(legal_actions)
+            self.play_cpu_turn_once()
 
-            action_type = decision.get("type", "")
-            amount = decision.get("amount")
-            try:
-                self.apply_player_action(seat, action_type, amount)
-            except Exception:
-                fallback = self.fallback_decision(legal_actions)
-                self.add_log(f"{self.phase_label()} | {player.name} | Invalid action / fallback {fallback['type']}")
-                self.apply_player_action(seat, fallback["type"], fallback.get("amount"))
+    def play_cpu_turn_once(self) -> bool:
+        if self.awaiting_new_hand or self.current_turn is None:
+            return False
+
+        seat = self.current_turn
+        player = self.players[seat]
+        legal_actions = self.legal_actions_for(seat)
+        try:
+            decision = self.cpu_decision_for(player, legal_actions)
+        except CpuAgentError as exc:
+            player.cpu_error = str(exc)
+            self.add_log(f"{self.phase_label()} | {player.name} | CPU error / fallback to check-fold")
+            decision = self.fallback_decision(legal_actions)
+
+        action_type = decision.get("type", "")
+        amount = decision.get("amount")
+        try:
+            self.apply_player_action(seat, action_type, amount)
+        except Exception:
+            fallback = self.fallback_decision(legal_actions)
+            self.add_log(f"{self.phase_label()} | {player.name} | Invalid action / fallback {fallback['type']}")
+            self.apply_player_action(seat, fallback["type"], fallback.get("amount"))
+        return True
 
     def cpu_decision_for(self, player: PlayerState, legal_actions: List[dict]) -> dict:
         if not player.cpu_path:
@@ -941,11 +1029,17 @@ class HoldemGame:
             "hand_id": self.hand_id,
             "phase": self.phase,
             "pot": self.pot,
+            "small_blind": self.small_blind,
+            "big_blind": self.big_blind,
             "community_cards": self.community_cards,
             "current_turn": self.current_turn,
             "current_bet": self.current_bet,
             "min_raise_to": self.min_raise_to,
+            "last_raise_size": self.last_raise_size,
+            "pending_to_act": sorted(self.pending_to_act),
             "dealer_index": self.dealer_index,
+            "small_blind_seat": self.small_blind_seat,
+            "big_blind_seat": self.big_blind_seat,
             "awaiting_new_hand": self.awaiting_new_hand,
             "table_message": self.table_message,
             "table_config": {
@@ -1001,6 +1095,7 @@ class HoldemGame:
         self.min_raise_to = self.big_blind
         self.pot = 0
         self.pending_to_act = set()
+        self.raise_right_seats = set()
         self.history = []
         self.last_winners = []
         self.small_blind_seat = None

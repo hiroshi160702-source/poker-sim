@@ -79,6 +79,29 @@
           <button id="reset-table-btn" class="ghost-btn">Reset Table</button>
         </div>
 
+        <details class="action-panel collapsible-panel" open>
+          <summary class="collapsible-summary">
+            <h2>Animation</h2>
+          </summary>
+          <div class="collapsible-body">
+            <div id="animation-event" class="turn-indicator">Animation idle.</div>
+            <label class="toggle-row" for="animate-cpu-actions">
+              <input id="animate-cpu-actions" type="checkbox" checked />
+              <span>Animate CPU actions while I play</span>
+            </label>
+            <div class="amount-controls">
+              <label for="animation-speed">Step Speed</label>
+              <input id="animation-speed" type="range" min="0.1" max="3" step="0.05" value="0.75" />
+              <div id="animation-speed-label" class="panel-note">0.75s</div>
+            </div>
+            <div class="button-row">
+              <button id="animation-start-btn" class="ghost-btn">Animate Current Table</button>
+              <button id="spectator-start-btn" class="primary-btn">Watch CPU Table</button>
+              <button id="animation-stop-btn" class="ghost-btn" disabled>Stop</button>
+            </div>
+          </div>
+        </details>
+
         <details class="cpu-panel collapsible-panel">
           <summary class="collapsible-summary">
             <h2>Table Setup</h2>
@@ -252,6 +275,6 @@
       </aside>
     </div>
 
-    <script src="/static/app.js?v=20260422-chip-step-1" defer></script>
+    <script src="/static/app.js?v=20260527-player-animation-1" defer></script>
   </body>
 </html>

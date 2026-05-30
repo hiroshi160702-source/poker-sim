@@ -111,7 +111,7 @@ def classify_effective_stack(game_state: dict, player_state: dict) -> str:
         if contender["seat"] != player_state["seat"] and contender["in_hand"] and not contender["folded"]
     ]
     effective = player_state["stack"] if not active_stacks else min(player_state["stack"], max(active_stacks))
-    big_blind = 50
+    big_blind = max(1, game_state.get("big_blind", 50))
     stack_in_bb = effective / big_blind
     if stack_in_bb <= 12:
         return "shallow"
@@ -123,25 +123,11 @@ def classify_effective_stack(game_state: dict, player_state: dict) -> str:
 
 
 def classify_preflop(hand: list[str]) -> str:
-    card_a, card_b = hand
-    suited = card_a[1] == card_b[1]
-    values = sorted([VALUES[card_a[0]], VALUES[card_b[0]]], reverse=True)
-    pair = values[0] == values[1]
-    gap = values[0] - values[1]
+    # プリフロップは HAND_COLOR_MAP のレンジ表をそのまま infoset bucket に使います。
+    # 表にないハンドは最下位の ash として扱います。
+    from app.strategy_tables.preflop_blueprint import infer_hand_color
 
-    if pair and values[0] >= 11:
-        return "premium"
-    if pair and values[0] >= 8:
-        return "strong"
-    if pair:
-        return "medium"
-    if values[0] >= 13 and values[1] >= 11:
-        return "strong"
-    if suited and gap <= 2 and values[0] >= 8:
-        return "speculative"
-    if values[0] >= 11 and values[1] >= 9:
-        return "medium"
-    return "weak"
+    return infer_hand_color("", hand)
 
 
 def classify_postflop(hand: list[str], board: list[str]) -> str:
@@ -215,16 +201,17 @@ def evaluate_five(cards: list[str]) -> tuple[int, list[int]]:
     for rank in ranks:
         counts[rank] = counts.get(rank, 0) + 1
     pattern = sorted(counts.values(), reverse=True)
-    if is_straight(ranks) and len(set(suits)) == 1:
-        return 8, ranks
+    straight_high = straight_value(ranks)
+    if straight_high and len(set(suits)) == 1:
+        return 8, [straight_high]
     if pattern == [4, 1]:
         return 7, ranks
     if pattern == [3, 2]:
         return 6, ranks
     if len(set(suits)) == 1:
         return 5, ranks
-    if is_straight(ranks):
-        return 4, ranks
+    if straight_high:
+        return 4, [straight_high]
     if pattern == [3, 1, 1]:
         return 3, ranks
     if pattern == [2, 2, 1]:
@@ -234,13 +221,19 @@ def evaluate_five(cards: list[str]) -> tuple[int, list[int]]:
     return 0, ranks
 
 
-def is_straight(ranks: list[int]) -> bool:
+def straight_value(ranks: list[int]) -> int:
     unique = sorted(set(ranks), reverse=True)
     if len(unique) != 5:
-        return False
+        return 0
     if unique[0] - unique[-1] == 4:
-        return True
-    return unique == [14, 5, 4, 3, 2]
+        return unique[0]
+    if unique == [14, 5, 4, 3, 2]:
+        return 5
+    return 0
+
+
+def is_straight(ranks: list[int]) -> bool:
+    return bool(straight_value(ranks))
 
 
 def has_flush_draw(cards: list[str]) -> bool:

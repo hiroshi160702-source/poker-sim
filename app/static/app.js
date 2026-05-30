@@ -5,6 +5,9 @@ const actionUrl = "/api/action";
 const uploadCpuFileUrl = "/api/upload-cpu-file";
 const resetTableUrl = "/api/reset-table";
 const configureTableUrl = "/api/configure-table";
+const animationStartUrl = "/api/animation/start";
+const animationStepUrl = "/api/animation/step";
+const animationStopUrl = "/api/animation/stop";
 const cpuMultiMatchUrl = "/api/run-cpu-multiplayer";
 const cpuMultiStartUrl = "/api/start-cpu-multiplayer";
 const cpuMultiJobBaseUrl = "/api/cpu-multiplayer-jobs";
@@ -33,6 +36,11 @@ let cpuMultiJobId = null;
 let cpuMultiJobPollHandle = null;
 let cfrJobId = null;
 let cfrJobPollHandle = null;
+let animationRunning = false;
+let animationSpectator = false;
+let animationTimer = null;
+let animationLastLog = "";
+let animationFlashSeat = null;
 
 function snapToStep(value, step = 25) {
   const numericValue = Number(value);
@@ -227,6 +235,101 @@ function stopCfrPolling() {
   }
 }
 
+function animationDelayMs() {
+  const input = document.getElementById("animation-speed");
+  const seconds = Number(input ? input.value : 0.75);
+  return Math.max(100, Math.round((Number.isFinite(seconds) ? seconds : 0.75) * 1000));
+}
+
+function updateAnimationSpeedLabel() {
+  const input = document.getElementById("animation-speed");
+  const label = document.getElementById("animation-speed-label");
+  if (!input || !label) return;
+  label.textContent = `${Number(input.value).toFixed(2)}s`;
+}
+
+function setAnimationControls(running) {
+  document.getElementById("animation-start-btn").disabled = running;
+  document.getElementById("spectator-start-btn").disabled = running;
+  document.getElementById("animation-stop-btn").disabled = !running;
+  document.getElementById("new-hand-btn").disabled = running;
+  document.getElementById("reset-table-btn").disabled = running;
+  document.getElementById("apply-setup-btn").disabled = running;
+}
+
+function stopAnimationTimer() {
+  if (animationTimer) {
+    clearTimeout(animationTimer);
+    animationTimer = null;
+  }
+}
+
+function latestActionLog(state) {
+  const logs = state.logs || [];
+  for (let index = logs.length - 1; index >= 0; index -= 1) {
+    const line = logs[index];
+    if (!line.includes(" | ")) continue;
+    if (line.includes(" | Board | ") || line.includes(" | Result | ") || line.includes(" | Hands | ")) {
+      return line;
+    }
+    const parts = line.split(" | ");
+    if (parts.length >= 3 && parts[1] !== "Table") {
+      return line;
+    }
+  }
+  return "";
+}
+
+function showAnimationEvent(state) {
+  const node = document.getElementById("animation-event");
+  if (!node) return;
+  const line = latestActionLog(state);
+  if (!line) {
+    node.textContent = animationRunning ? "Waiting for next action..." : "Animation idle.";
+    return;
+  }
+  animationLastLog = line;
+  const parts = line.split(" | ");
+  node.textContent = parts.length >= 3 ? `${parts[0]} / ${parts[1]} / ${parts.slice(2).join(" | ")}` : line;
+  const actor = parts.length >= 3 ? parts[1] : "";
+  const player = (state.players || []).find((entry) => entry.name === actor);
+  animationFlashSeat = player ? player.seat : null;
+}
+
+function scheduleAnimationStep() {
+  stopAnimationTimer();
+  if (!animationRunning) return;
+  animationTimer = setTimeout(runAnimationStep, animationDelayMs());
+}
+
+async function runAnimationStep() {
+  if (!animationRunning || requestInFlight) {
+    scheduleAnimationStep();
+    return;
+  }
+  try {
+    const state = await apiFetch(animationStepUrl, { method: "POST" });
+    renderState(state);
+    const human = (state.players || []).find((player) => player.is_human);
+    if (!animationSpectator && human && human.is_current_turn) {
+      document.getElementById("animation-event").textContent = "Your turn. Animation will resume after your action.";
+      return;
+    }
+    if (state.awaiting_new_hand && !animationSpectator) {
+      animationRunning = false;
+      setAnimationControls(false);
+      stopAnimationTimer();
+      return;
+    }
+    scheduleAnimationStep();
+  } catch (error) {
+    animationRunning = false;
+    setAnimationControls(false);
+    stopAnimationTimer();
+    document.getElementById("animation-event").textContent = error.message;
+  }
+}
+
 function renderCpuMatchProgress(job = null) {
   const label = document.getElementById("cpu-multi-progress-label");
   const bar = document.getElementById("cpu-multi-progress-bar");
@@ -373,14 +476,14 @@ function renderSeats(players) {
       player.is_big_blind ? "BB" : "",
     ].filter(Boolean).join(" ");
     const angleStep = 360 / totalPlayers;
-    const angle = (90 + player.seat * angleStep) * (Math.PI / 180);
+    const angle = (90 - player.seat * angleStep) * (Math.PI / 180);
     const centerX = 50;
     const centerY = 51;
     const radiusX = totalPlayers >= 8 ? 39 : 35;
     const radiusY = totalPlayers >= 8 ? 39 : 34;
     const x = centerX + Math.cos(angle) * radiusX;
     const y = centerY - Math.sin(angle) * radiusY;
-    node.className = `seat ${player.is_current_turn ? "current-turn" : ""} ${player.folded ? "folded" : ""} ${!player.in_hand ? "out" : ""} seat-${player.seat}`;
+    node.className = `seat ${player.is_current_turn ? "current-turn" : ""} ${animationFlashSeat === player.seat ? "action-flash" : ""} ${player.folded ? "folded" : ""} ${!player.in_hand ? "out" : ""} seat-${player.seat}`;
     node.style.left = `${x}%`;
     node.style.top = `${y}%`;
     node.style.transform = "translate(-50%, -50%)";
@@ -476,6 +579,9 @@ function renderActionButtons(state) {
           body: JSON.stringify(payload),
         });
         renderState(nextState);
+        if (animationRunning && !animationSpectator) {
+          scheduleAnimationStep();
+        }
       } catch (error) {
         indicator.textContent = "Action failed. Check amount and try again.";
         alert(error.message);
@@ -823,6 +929,9 @@ function renderState(state) {
   renderLogs(state.logs);
   renderHistory(state.history);
   renderHeroWinRate(state);
+  if (animationRunning) {
+    showAnimationEvent(state);
+  }
   if (!freezeCpuPanels) {
     ensureCpuConfigRendered(state.players);
     ensureCpuMultiSlotsRendered();
@@ -835,6 +944,9 @@ function renderState(state) {
 
 async function refreshState() {
   try {
+    if (animationRunning) {
+      return;
+    }
     if (requestInFlight) {
       return;
     }
@@ -874,6 +986,10 @@ document.getElementById("new-hand-btn").addEventListener("click", async () => {
   if (requestInFlight) return;
   try {
     revealFoldedHands = false;
+    if (document.getElementById("animate-cpu-actions").checked) {
+      await startAnimation(false);
+      return;
+    }
     const state = await apiFetch(newHandUrl, { method: "POST" });
     renderState(state);
   } catch (error) {
@@ -889,6 +1005,58 @@ document.getElementById("reset-table-btn").addEventListener("click", async () =>
   try {
     revealFoldedHands = false;
     const state = await apiFetch(resetTableUrl, { method: "POST" });
+    renderState(state);
+  } catch (error) {
+    alert(error.message);
+  }
+});
+
+document.getElementById("animation-speed").addEventListener("input", updateAnimationSpeedLabel);
+
+async function startAnimation(spectator) {
+  if (requestInFlight || animationRunning) return;
+  try {
+    revealFoldedHands = false;
+    animationRunning = true;
+    animationSpectator = spectator;
+    animationFlashSeat = null;
+    setAnimationControls(true);
+    document.getElementById("animation-event").textContent = spectator
+      ? "Starting CPU spectator table..."
+      : "Starting animation...";
+    const state = await apiFetch(animationStartUrl, {
+      method: "POST",
+      body: JSON.stringify({ spectator }),
+    });
+    renderState(state);
+    scheduleAnimationStep();
+  } catch (error) {
+    animationRunning = false;
+    animationSpectator = false;
+    setAnimationControls(false);
+    stopAnimationTimer();
+    alert(error.message);
+  }
+}
+
+document.getElementById("animation-start-btn").addEventListener("click", () => {
+  startAnimation(false);
+});
+
+document.getElementById("spectator-start-btn").addEventListener("click", () => {
+  startAnimation(true);
+});
+
+document.getElementById("animation-stop-btn").addEventListener("click", async () => {
+  if (requestInFlight) return;
+  try {
+    animationRunning = false;
+    animationSpectator = false;
+    stopAnimationTimer();
+    setAnimationControls(false);
+    const state = await apiFetch(animationStopUrl, { method: "POST" });
+    animationFlashSeat = null;
+    document.getElementById("animation-event").textContent = "Animation stopped.";
     renderState(state);
   } catch (error) {
     alert(error.message);
@@ -1151,6 +1319,8 @@ renderCpuMatchProgress(null);
 renderCpuReplaySnapshot(null);
 renderCfrProgress(null);
 setCpuMultiRunning(false);
+setAnimationControls(false);
+updateAnimationSpeedLabel();
 document.getElementById("run-cfr-btn").disabled = false;
 refreshState();
 setInterval(refreshState, 6000);

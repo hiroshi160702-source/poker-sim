@@ -83,9 +83,13 @@ def decide_action(game_state, player_state, legal_actions):
 - [random_agent.py](app/sample_cpus/random_agent.py)
 - [tight_agent.py](app/sample_cpus/tight_agent.py)
 - [cfr_agent.py](app/sample_cpus/cfr_agent.py)
+- [pluribus_agent.py](app/sample_cpus/pluribus_agent.py)
 - [game_theory_agent.py](app/sample_cpus/game_theory_agent.py)
 - [strategy_table_cpu.py](app/sample_cpus/strategy_table_cpu.py)
 - [table_builder_agent.py](app/sample_cpus/table_builder_agent.py)
+
+`pluribus_agent.py` は Pluribus 風の軽量近似 CPU です。事前戦略に近いヒューリスティックを持ち、
+各局面で fold/check/call と `1/3 pot`, `1/2 pot`, `1 pot`, `all-in` の抽象サイズを評価して選びます。
 
 ## Self-Play
 
@@ -137,17 +141,61 @@ python3 tools/strategy.py \
   --out app/sample_cpus/strategy_tables/cfr_generated.json
 ```
 
-6-max などのマルチプレイヤー向けに、プリフロップ専用の近似 MCCFR で戦略表を作るには次も使えます。
+6-max などのマルチプレイヤー向けに、全ストリート対応の近似 MCCFR で戦略表を作るには次も使えます。
 
 ```bash
 python3 tools/strategy_preflop_multiway.py \
   --players 6 \
   --iterations 5000 \
   --min-visits 25 \
-  --out app/sample_cpus/strategy_tables/preflop_6max_mccfr.json
+  --out app/sample_cpus/strategy_tables/multiway_6max_mccfr.json
 ```
 
-この出力はプリフロップ専用です。ポストフロップは既存テーブルやヒューリスティックにフォールバックさせる前提です。
+以前と同じプリフロップ専用の出力にしたい場合は `--preflop-only` を付けてください。
+長時間学習を途中から再開したい場合は、同時に出力される checkpoint JSON を `--resume-state` に渡します。
+現在の学習器はルートから1本のtrajectoryをサンプリングして終局まで進め、そのtrajectory上に現れた全プレイヤーの infoset を後からまとめて regret 更新します。
+各infosetでは合法な各アクションについて「もし別行動をしていたら」をロールアウトで評価し、`utility(action) - node_utility` を regret に加えます。
+これにより、同じtrajectory上でブラフした側・ブラフに直面した側の両方が学習対象になります。
+平均戦略は Linear CFR として、古いiterationより新しいiterationを大きい重みで `strategy_sums` に加えます。
+また、学習が1000 iterationを超えた後は、非常に大きな負regretを持つtraverser行動を95%のiterationで評価対象から外します。ただし5%のiterationでは全行動を探索します。
+初回訪問の infoset では、まず `fold/call/raise` などの基本アクショングループを等確率にし、`raise` や `bet` が選ばれた場合だけ `small/medium/large` のサイズを等確率に割り振ります。
+`all-in` はルール上の合法アクションとしては残しますが、blueprint学習の選択肢には `bet_large` / `raise_large` がスタック上限に潰れる局面だけ含めます。
+以前入れていた `air + jam` などの学習時安全制約は `docs/removed_learning_safety_constraints.md` に記録し、現在のblueprint学習では無効化しています。
+
+```bash
+python3 tools/strategy_preflop_multiway.py \
+  --players 6 \
+  --iterations 5000 \
+  --resume-state app/sample_cpus/strategy_tables/multiway_6max_mccfr_state.json \
+  --out app/sample_cpus/strategy_tables/multiway_6max_mccfr.json
+```
+
+`pluribus_agent.py` はデフォルトで `app/sample_cpus/strategy_tables/pluribus_blueprint_6p_*.json` から、checkpoint の `completed_iterations` が最大の JSON を blueprint として自動選択します。
+`PLURIBUS_BLUEPRINT_PATH` は通常この自動選択より優先されません。特定ファイルに固定したい場合だけ `PLURIBUS_BLUEPRINT_PINNED=1` と一緒に指定してください。
+blueprint 参照時は、まず完全一致の infoset、次に `any` へ丸めた既存キーを探します。
+それでも未学習なら、stack bucket、player count、board texture などの一部軸を自由にして近い実在 infoset を集め、
+各行の戦略を平均した補間戦略を使います。補間もできない場合だけヒューリスティック fallback に落ちます。
+局面ごとに相手レンジを簡易更新し、root/subgame CFR 近似を `PLURIBUS_SUBGAME_SECONDS` 秒だけ走らせます。この値は最大 15 秒に制限されます。
+意思決定の理由を追いたい場合は `pluribus_whitebox_agent.py` を使います。通常の Pluribus と同じ意思決定を行い、
+`PLURIBUS_TRACE_PATH` の JSONL に infoset、候補行動、blueprint確率、最終確率、選択理由を書き出します。
+
+```bash
+PLURIBUS_BLUEPRINT_PATH=app/sample_cpus/strategy_tables/pluribus_blueprint_6p_500000.json \
+PLURIBUS_TRACE_PATH=logs/pluribus_whitebox_decisions.jsonl \
+python3 - <<'PY'
+from pathlib import Path
+from app.selfplay import run_multiway_cpu_match
+
+agent = str(Path("app/sample_cpus/pluribus_whitebox_agent.py").resolve())
+run_multiway_cpu_match(
+    logs_dir=Path("logs"),
+    embedded_cpu_dir=Path("embedded_cpus"),
+    cpu_paths=[agent, agent, agent],
+    hands=10,
+    starting_stack=5000,
+)
+PY
+```
 
 ## Project Structure
 

@@ -239,16 +239,17 @@ def evaluate_five(cards):
     for rank in ranks:
         counts[rank] = counts.get(rank, 0) + 1
     pattern = sorted(counts.values(), reverse=True)
-    if is_straight(ranks) and len(set(suits)) == 1:
-        return 8, ranks
+    straight_high = straight_value(ranks)
+    if straight_high and len(set(suits)) == 1:
+        return 8, [straight_high]
     if pattern == [4, 1]:
         return 7, ranks
     if pattern == [3, 2]:
         return 6, ranks
     if len(set(suits)) == 1:
         return 5, ranks
-    if is_straight(ranks):
-        return 4, ranks
+    if straight_high:
+        return 4, [straight_high]
     if pattern == [3, 1, 1]:
         return 3, ranks
     if pattern == [2, 2, 1]:
@@ -258,13 +259,19 @@ def evaluate_five(cards):
     return 0, ranks
 
 
-def is_straight(ranks):
+def straight_value(ranks):
     unique = sorted(set(ranks), reverse=True)
     if len(unique) != 5:
-        return False
+        return 0
     if unique[0] - unique[-1] == 4:
-        return True
-    return unique == [14, 5, 4, 3, 2]
+        return unique[0]
+    if unique == [14, 5, 4, 3, 2]:
+        return 5
+    return 0
+
+
+def is_straight(ranks):
+    return bool(straight_value(ranks))
 
 
 def has_flush_draw(cards):

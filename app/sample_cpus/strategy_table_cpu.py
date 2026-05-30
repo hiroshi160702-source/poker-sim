@@ -10,17 +10,23 @@ from pathlib import Path
 from app.strategy_tables.lib import candidate_infosets, encode_infoset
 from app.strategy_tables.preflop_blueprint import blend_with_blueprint
 
+MULTIPLAYER_DEFAULT_TABLE = (
+    Path(__file__).resolve().parent / "strategy_tables" / "multiplayer_strategy_6p_5000000hands.json"
+)
+HEADS_UP_DEFAULT_TABLE = (
+    Path(__file__).resolve().parent / "strategy_tables" / "tournament_blueprint_heads_up_cfr_10000000.json"
+)
 DEFAULT_TABLE_CANDIDATES = [
-    Path(__file__).resolve().parent / "strategy_tables" / "mllui_player_preflop_mccfr_6p_500000.json",
-    Path(__file__).resolve().parent / "strategy_tables" / "tournament_blueprint_heads_up_cfr_10000000.json",
+    MULTIPLAYER_DEFAULT_TABLE,
+    HEADS_UP_DEFAULT_TABLE,
 ]
 
 
 def decide_action(game_state, player_state, legal_actions):
     # 戦略表は infoset をキーにしているため、対局中は参照して
     # 確率的にアクションを選ぶだけで動きます。
-    table = load_strategy_table()
     infoset = encode_infoset(game_state, player_state)
+    table = load_strategy_table(resolve_table_path(None, infoset))
     strategy = lookup_strategy(table, infoset, legal_actions)
     strategy = blend_with_blueprint(
         strategy,
@@ -41,7 +47,7 @@ def load_strategy_table(table_path: str | None = None):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def resolve_table_path(table_path: str | None) -> Path:
+def resolve_table_path(table_path: str | None, infoset: str | None = None) -> Path:
     # アップロード CPU は app/sample_cpus の外で動くことがあるため、
     # ローカル配置先とパッケージ内の両方を探索します。
     if table_path:
@@ -51,6 +57,12 @@ def resolve_table_path(table_path: str | None) -> Path:
     sibling_jsons = sorted(Path(__file__).resolve().parent.glob("*.json"))
     if sibling_jsons:
         return sibling_jsons[0].resolve()
+    if infoset:
+        player_count = infoset.split("|", 2)[1]
+        if player_count == "2p" and HEADS_UP_DEFAULT_TABLE.exists():
+            return HEADS_UP_DEFAULT_TABLE.resolve()
+        if MULTIPLAYER_DEFAULT_TABLE.exists():
+            return MULTIPLAYER_DEFAULT_TABLE.resolve()
     for candidate in DEFAULT_TABLE_CANDIDATES:
         if candidate.exists():
             return candidate.resolve()
@@ -60,24 +72,37 @@ def resolve_table_path(table_path: str | None) -> Path:
 def lookup_strategy(table, infoset, legal_actions):
     # 厳密な infoset から広い "any" バケットへ順に探し、現在局面に合う
     # 合法アクション分布を見つけます。
-    legal_types = {action["type"] for action in legal_actions}
+    legal_names = set(abstract_action_names(legal_actions))
+    legal_types = {base_action_name(action_name) for action_name in legal_names}
 
     for key in candidate_infosets(infoset):
         strategy = table.get(key)
         if strategy:
-            filtered = {action: prob for action, prob in strategy.items() if action in legal_types}
+            filtered = {}
+            for action, prob in strategy.items():
+                if action in legal_names:
+                    filtered[action] = prob
+                elif action in legal_types:
+                    matching = [
+                        action_name
+                        for action_name in legal_names
+                        if base_action_name(action_name) == action
+                    ]
+                    share = prob / max(1, len(matching))
+                    for action_name in matching:
+                        filtered[action_name] = filtered.get(action_name, 0.0) + share
             if filtered:
                 return normalize(filtered)
 
     fallback = {}
-    for action in legal_actions:
-        action_type = action["type"]
-        if action_type in {"check", "call"}:
-            fallback[action_type] = 3.0
-        elif action_type in {"bet", "raise"}:
-            fallback[action_type] = 2.0
+    for action_name in legal_names:
+        base_action = base_action_name(action_name)
+        if base_action in {"check", "call"}:
+            fallback[action_name] = 3.0
+        elif base_action in {"bet", "raise"}:
+            fallback[action_name] = 2.0
         else:
-            fallback[action_type] = 1.0
+            fallback[action_name] = 1.0
     return normalize(fallback)
 
 
@@ -116,15 +141,11 @@ def apply_safety_overrides(strategy, infoset, legal_actions):
             weights["all-in"] *= 0.45
 
     if weak_bucket and pressure in {"none", "tiny", "small"}:
-        if "raise" in weights:
-            weights["raise"] *= 0.35
-        if "bet" in weights:
-            weights["bet"] *= 0.35
+        scale_action_family(weights, "raise", 0.35)
+        scale_action_family(weights, "bet", 0.35)
     elif medium_bucket and pressure in {"none", "tiny"}:
-        if "raise" in weights:
-            weights["raise"] *= 0.7
-        if "bet" in weights:
-            weights["bet"] *= 0.7
+        scale_action_family(weights, "raise", 0.7)
+        scale_action_family(weights, "bet", 0.7)
 
     passive_boost = 1.0
     if weak_bucket:
@@ -133,10 +154,15 @@ def apply_safety_overrides(strategy, infoset, legal_actions):
         passive_boost = 1.2
 
     for action_type in ("check", "call", "fold"):
-        if action_type in weights:
-            weights[action_type] *= passive_boost
+        scale_action_family(weights, action_type, passive_boost)
 
     return normalize(weights)
+
+
+def scale_action_family(weights, base_action, multiplier):
+    for action_name in list(weights):
+        if base_action_name(action_name) == base_action:
+            weights[action_name] *= multiplier
 
 
 def sample_action(strategy):
@@ -151,13 +177,14 @@ def sample_action(strategy):
 
 
 def materialize_action(action_type, legal_actions, infoset, game_state=None, player_state=None):
+    base_action, size_name = split_action_name(action_type)
     for action in legal_actions:
-        if action["type"] != action_type:
+        if action["type"] != base_action:
             continue
 
-        payload = {"type": action_type}
-        if action_type in {"bet", "raise"}:
-            payload["amount"] = choose_size(action, infoset, game_state, player_state)
+        payload = {"type": base_action}
+        if base_action in {"bet", "raise"}:
+            payload["amount"] = choose_size(action, infoset, game_state, player_state, size_name)
         elif "amount" in action:
             payload["amount"] = action["amount"]
         return payload
@@ -166,13 +193,17 @@ def materialize_action(action_type, legal_actions, infoset, game_state=None, pla
     return {"type": first["type"], "amount": first.get("amount")}
 
 
-def choose_size(action, infoset, game_state=None, player_state=None):
+def choose_size(action, infoset, game_state=None, player_state=None, size_name=None):
     # 戦略表には行動確率しかないため、ベット/レイズ額は局面と手札強度から
     # 明示的な候補サイズを重み付きで選びます。
     min_total = action["min_total"]
     max_total = action["max_total"]
     if max_total <= min_total:
         return max_total
+    if size_name:
+        for size in action.get("abstract_sizes") or []:
+            if size.get("name") == size_name:
+                return max(min_total, min(max_total, int(size["total"])))
 
     phase, _player_count, _position, bucket, _pressure, _stack_bucket, _texture = infoset.split("|")
     action_type = action["type"]
@@ -270,3 +301,33 @@ def is_preflop_open_raise(game_state):
     current_bet = numeric_state_value(game_state, "current_bet", 0)
     big_blind = numeric_state_value(game_state, "big_blind", 10)
     return current_bet <= big_blind
+
+
+def abstract_action_names(legal_actions):
+    names = []
+    for action in legal_actions:
+        action_type = action["type"]
+        if action_type in {"bet", "raise"}:
+            sizes = [
+                size["name"]
+                for size in action.get("abstract_sizes") or []
+                if size.get("name") in {"small", "medium", "large"}
+            ]
+            if not sizes:
+                sizes = ["small"]
+            names.extend(f"{action_type}_{size}" for size in sizes)
+        else:
+            names.append(action_type)
+    return names
+
+
+def split_action_name(action_name):
+    for base_action in ("bet", "raise"):
+        prefix = f"{base_action}_"
+        if action_name.startswith(prefix):
+            return base_action, action_name.removeprefix(prefix)
+    return action_name, None
+
+
+def base_action_name(action_name):
+    return split_action_name(action_name)[0]

@@ -130,6 +130,8 @@ def normalize_weights(weights: dict[str, float]) -> dict[str, float]:
 
 def infer_hand_color(bucket: str, hand: list[str] | None = None) -> str:
     if not hand:
+        if bucket in COLOR_TO_INDEX:
+            return bucket
         return {
             "premium": "red",
             "strong": "yellow",

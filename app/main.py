@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .engine import HoldemGame
+from .engine import CPU_TEMPLATE_POOL, HoldemGame
 from .selfplay import run_multiway_cpu_match
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -38,6 +38,9 @@ cpu_multi_jobs: dict[str, dict] = {}
 cpu_multi_jobs_lock = threading.Lock()
 cfr_training_jobs: dict[str, dict] = {}
 cfr_training_jobs_lock = threading.Lock()
+animation_mode = False
+animation_spectator_mode = False
+animation_original_human_seats: set[int] = set()
 
 
 class ActionRequest(BaseModel):
@@ -53,6 +56,10 @@ class CpuLoadRequest(BaseModel):
 class TableConfigRequest(BaseModel):
     starting_stack: int
     cpu_count: int
+
+
+class AnimationStartRequest(BaseModel):
+    spectator: bool = False
 
 
 class EmbeddedCpuRequest(BaseModel):
@@ -209,9 +216,70 @@ async def action(request: ActionRequest) -> dict:
 
     try:
         game.apply_player_action(current.seat, request.action, request.amount)
-        game.auto_play_until_human()
+        if not animation_mode:
+            game.auto_play_until_human()
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return game.serialize_state()
+
+
+def set_spectator_players() -> None:
+    global animation_original_human_seats
+    sample_dir = (BASE_DIR / "sample_cpus").resolve()
+    animation_original_human_seats = {
+        player.seat for player in game.players if player.is_human
+    }
+    for index, player in enumerate(game.players):
+        player.is_human = False
+        if not player.cpu_path:
+            template = CPU_TEMPLATE_POOL[min(index, len(CPU_TEMPLATE_POOL) - 1)]
+            player.cpu_path = str(sample_dir / template)
+
+
+def restore_human_players() -> None:
+    global animation_original_human_seats
+    for player in game.players:
+        player.is_human = player.seat in animation_original_human_seats
+    animation_original_human_seats = set()
+
+
+@app.post("/api/animation/start")
+async def start_animation(request: AnimationStartRequest) -> dict:
+    global animation_mode, animation_spectator_mode
+    animation_mode = True
+    animation_spectator_mode = request.spectator
+    game.autoplay_cpus_enabled = False
+    if request.spectator:
+        if not game.awaiting_new_hand:
+            game.reset_table()
+        set_spectator_players()
+    if game.awaiting_new_hand:
+        game.start_new_hand(autoplay_cpus=False)
+    return game.serialize_state(reveal_all_cards=request.spectator)
+
+
+@app.post("/api/animation/step")
+async def step_animation() -> dict:
+    if not animation_mode:
+        raise HTTPException(status_code=400, detail="Animation mode is not running.")
+    if game.awaiting_new_hand:
+        game.start_new_hand(autoplay_cpus=False)
+    if (
+        game.current_turn is not None
+        and (animation_spectator_mode or not game.players[game.current_turn].is_human)
+    ):
+        game.play_cpu_turn_once()
+    return game.serialize_state(reveal_all_cards=animation_spectator_mode)
+
+
+@app.post("/api/animation/stop")
+async def stop_animation() -> dict:
+    global animation_mode, animation_spectator_mode
+    animation_mode = False
+    if animation_spectator_mode:
+        restore_human_players()
+    animation_spectator_mode = False
+    game.autoplay_cpus_enabled = True
     return game.serialize_state()
 
 
